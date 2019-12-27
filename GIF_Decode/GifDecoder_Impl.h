@@ -191,7 +191,7 @@ void GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::fillImageDataRect(uint8_
 template <int maxGifWidth, int maxGifHeight, int lzwMaxBits>
 void GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::fillImageData(uint8_t colorIndex) {
 
-    memset(imageData, colorIndex, sizeof(imageData));
+    memset(imageData, colorIndex, maxGifWidth*maxGifHeight);
 }
 
 // Copy image data in rect from a src to a dst
@@ -707,7 +707,7 @@ int GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::startDecoding(void) {
 }
 
 template <int maxGifWidth, int maxGifHeight, int lzwMaxBits>
-int GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::decodeFrame(void) {
+int GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::decodeFrame(bool loop) {
     // Parse gif data
     int result = parseData();
     if (result < ERROR_NONE) {
@@ -719,7 +719,8 @@ int GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::decodeFrame(void) {
         return result;
     }
 
-    if (result == ERROR_DONE_PARSING) {
+    if (result == ERROR_DONE_PARSING && loop == true) {
+
         //startDecoding();
         // Initialize variables like with a new file
         keyFrame = true;
@@ -752,25 +753,25 @@ void GifDecoder<maxGifWidth, maxGifHeight, lzwMaxBits>::decompressAndDisplayFram
     if (tbiInterlaced) {
         // Decode every 8th line starting at line 0
         for (int line = tbiImageY + 0; line < tbiHeight + tbiImageY; line += 8) {
-            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + sizeof(imageData)));
+            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + maxGifWidth*maxGifHeight));
         }
         // Decode every 8th line starting at line 4
         for (int line = tbiImageY + 4; line < tbiHeight + tbiImageY; line += 8) {
-            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + sizeof(imageData)));
+            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + maxGifWidth*maxGifHeight));
         }
         // Decode every 4th line starting at line 2
         for (int line = tbiImageY + 2; line < tbiHeight + tbiImageY; line += 4) {
-            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + sizeof(imageData)));
+            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + maxGifWidth*maxGifHeight));
         }
         // Decode every 2nd line starting at line 1
         for (int line = tbiImageY + 1; line < tbiHeight + tbiImageY; line += 2) {
-            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + sizeof(imageData)));
+            lzw_decode(imageData + (line * maxGifWidth) + tbiImageX, tbiWidth, min(imageData + (line * maxGifWidth) + maxGifWidth, imageData + maxGifWidth*maxGifHeight));
         }
     }
     else    {
         // Decode the non interlaced LZW data into the image data buffer
         for (int line = tbiImageY; line < tbiHeight + tbiImageY; line++) {
-            lzw_decode(imageData  + (line * maxGifWidth) + tbiImageX, tbiWidth, imageData + sizeof(imageData));
+            lzw_decode(imageData  + (line * maxGifWidth) + tbiImageX, tbiWidth, imageData + maxGifWidth*maxGifHeight);
         }
     }
 

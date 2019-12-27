@@ -62,7 +62,7 @@ static RCC_PeriphCLKInitTypeDef  PeriphClkInitStruct;
 #define LAYER1_ADDRESS  (LCD_FB_START_ADDRESS + 800 * 480 * 4)
 #define IMAGEBUFF_ADDRESS (LAYER1_ADDRESS + 800 * 480 * 4)
 #define GIFIMAGE_ADDRESS (IMAGEBUFF_ADDRESS + 800 * 480 * 4)
-#define GIFIMAGEBU_ADDRESS (GIFIMAGE_ADDRESS + 800 * 480)
+#define GIFIMAGEBU_ADDRESS (GIFIMAGE_ADDRESS + 800 * 480*4)
 
 #define INVALID_AREA      0
 #define LEFT_AREA         1
@@ -84,9 +84,9 @@ FIL JPEG_File;  /* File object */
  * lzwMaxBits can be set to 10 or 11 for smaller displays to save RAM, but use 12 for large displays
  * All 32x32-pixel GIFs tested so far work with 11, most work with 10
  */
-const uint16_t kMatrixWidth = 500;        // known working: 32, 64, 96, 128
-const uint16_t kMatrixHeight = 450;       // known working: 16, 32, 48, 64
-GifDecoder<kMatrixWidth, kMatrixHeight, 12> decoder;//((uint8_t *)GIFIMAGE_ADDRESS, (uint8_t *)GIFIMAGEBU_ADDRESS);
+const uint16_t kMatrixWidth = 800;        // known working: 32, 64, 96, 128
+const uint16_t kMatrixHeight = 480;       // known working: 16, 32, 48, 64
+GifDecoder<kMatrixWidth, kMatrixHeight, 12> decoder((uint8_t *)GIFIMAGE_ADDRESS, (uint8_t *)GIFIMAGEBU_ADDRESS);
 
 /* USER CODE END PV */
 

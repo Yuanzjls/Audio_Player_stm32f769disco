@@ -27,8 +27,13 @@ typedef struct rgb_24 {
 template <int maxGifWidth, int maxGifHeight, int lzwMaxBits>
 class GifDecoder {
 public:
+    GifDecoder(uint8_t * address, uint8_t * addressbu)
+    {
+        imageData = address;
+        imageDataBU = addressbu;
+    }
     int startDecoding(void);
-    int decodeFrame(void);
+    int decodeFrame(bool loop=true);
     void setScreenClearCallback(callback f);
     void setUpdateScreenCallback(callback f);
     void setDrawPixelCallback(pixel_callback f);
@@ -104,12 +109,13 @@ private:
 
     char tempBuffer[260];
 
-    // Buffer image data is decoded into
-    uint8_t imageData[maxGifWidth * maxGifHeight];
-
-    // Backup image data buffer for saving portions of image disposal method == 3
-    uint8_t imageDataBU[maxGifWidth * maxGifHeight];
-
+//    // Buffer image data is decoded into
+//    uint8_t imageData[maxGifWidth * maxGifHeight];
+//
+//    // Backup image data buffer for saving portions of image disposal method == 3
+//    uint8_t imageDataBU[maxGifWidth * maxGifHeight];
+    uint8_t *imageData;
+    uint8_t *imageDataBU;
     callback screenClearCallback;
     callback updateScreenCallback;
     pixel_callback drawPixelCallback;
