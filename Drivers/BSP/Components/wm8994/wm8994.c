@@ -64,7 +64,7 @@
 /* Uncomment this line to enable verifying data sent to codec after each write 
    operation (for debug purpose) */
 #if !defined (VERIFY_WRITTENDATA)  
-/*#define VERIFY_WRITTENDATA*/
+#define VERIFY_WRITTENDATA
 #endif /* VERIFY_WRITTENDATA */
 /**
   * @}
