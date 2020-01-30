@@ -9,6 +9,7 @@
 #include <stm32f769i_discovery_audio.h>
 #include "GifDecoder.h"
 #include "wavdecoder.h"
+#include <stdio.h>
 //#include "stm32f769i_discovery_lcd.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -458,7 +459,7 @@ int main(void)
             {
             	if (UartHandle.gState == HAL_UART_STATE_READY)
             	{
-            		HAL_UART_Transmit_DMA(&UartHandle, (uint8_t *)"Hello World\n\r", 19);
+            		printf("Hello world, %.4f\r\n", 3.1415926);
             	}
             }
           }

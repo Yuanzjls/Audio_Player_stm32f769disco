@@ -50,10 +50,9 @@
 #include <stdio.h>
 #include <signal.h>
 #include <time.h>
-#include <sys/time.h>
-#include <sys/times.h>
+#include <main.h>
 
-
+extern UART_HandleTypeDef UartHandle;
 /* Variables */
 //#undef errno
 extern int errno;
@@ -104,10 +103,7 @@ int _write(int file, char *ptr, int len)
 {
 	int DataIdx;
 
-	for (DataIdx = 0; DataIdx < len; DataIdx++)
-	{
-		__io_putchar(*ptr++);
-	}
+	HAL_UART_Transmit_DMA(&UartHandle, ptr, len);
 	return len;
 }
 

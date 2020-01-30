@@ -57,7 +57,10 @@ extern "C" {
 #include "jpeg_utils.h"
 #include <decode_polling.h>
 #include "jpeg_utils.h"
-
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "croutine.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* SAI peripheral configuration defines */
