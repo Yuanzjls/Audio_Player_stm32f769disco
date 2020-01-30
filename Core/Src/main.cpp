@@ -6,10 +6,9 @@
 #include <main.h>
 #include <string.h>
 #include <ff.h>
-#include <decode_polling.h>
-#include "jpeg_utils.h"
+#include <stm32f769i_discovery_audio.h>
 #include "GifDecoder.h"
-
+#include "wavdecoder.h"
 //#include "stm32f769i_discovery_lcd.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -38,6 +37,8 @@ DSI_VidCfgTypeDef hdsivideo_handle;
 DSI_CmdCfgTypeDef CmdCfg;
 DSI_LPCmdTypeDef LPCmd;
 DSI_PLLInitTypeDef dsiPllInit;
+SAI_HandleTypeDef SaiHandle;
+DMA_HandleTypeDef            hSaiDma;
 
 #define JPEG_SOI_MARKER (0xFFD8) /* JPEG Start Of Image marker*/
 #define JPEG_SOI_MARKER_BYTE0 (JPEG_SOI_MARKER & 0xFF)
@@ -73,7 +74,8 @@ static RCC_PeriphCLKInitTypeDef  PeriphClkInitStruct;
 
 
 RTC_HandleTypeDef hrtc;
-
+UART_HandleTypeDef UartHandle;
+DMA_HandleTypeDef DMAUartHandle;
 FIL JPEG_File;  /* File object */
 /* USER CODE BEGIN PV */
 /*GIF Decode Varible part*/
@@ -86,7 +88,7 @@ FIL JPEG_File;  /* File object */
  */
 const uint16_t kMatrixWidth = 800;        // known working: 32, 64, 96, 128
 const uint16_t kMatrixHeight = 480;       // known working: 16, 32, 48, 64
-GifDecoder<kMatrixWidth, kMatrixHeight, 12> decoder((uint8_t *)GIFIMAGE_ADDRESS, (uint8_t *)GIFIMAGEBU_ADDRESS);
+//GifDecoder<kMatrixWidth, kMatrixHeight, 12> decoder((uint8_t *)GIFIMAGE_ADDRESS, (uint8_t *)GIFIMAGEBU_ADDRESS);
 
 /* USER CODE END PV */
 
@@ -183,6 +185,76 @@ uint32_t JPEG_FindFrameOffset(uint32_t offset, FIL *file)
 }
 
 #endif
+AUDIO_DrvTypeDef *audio_drv;
+static void Playback_Init(uint32_t SampleRate)
+{
+  RCC_PeriphCLKInitTypeDef RCC_PeriphCLKInitStruct;
+  
+  /* Configure PLLSAI prescalers */
+  /* PLLSAI_VCO: VCO_429M 
+     SAI_CLK(first level) = PLLSAI_VCO/PLLSAIQ = 429/2 = 214.5 Mhz
+     SAI_CLK_x = SAI_CLK(first level)/PLLSAIDIVQ = 214.5/19 = 11.289 Mhz */ 
+  RCC_PeriphCLKInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SAI2;
+  RCC_PeriphCLKInitStruct.Sai2ClockSelection = RCC_SAI2CLKSOURCE_PLLSAI;
+  RCC_PeriphCLKInitStruct.PLLSAI.PLLSAIN = 429; 
+  RCC_PeriphCLKInitStruct.PLLSAI.PLLSAIQ = 2; 
+  RCC_PeriphCLKInitStruct.PLLSAIDivQ = 19;     
+  
+  if(HAL_RCCEx_PeriphCLKConfig(&RCC_PeriphCLKInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* Initialize SAI */
+  __HAL_SAI_RESET_HANDLE_STATE(&SaiHandle);
+
+  SaiHandle.Instance = AUDIO_SAIx;
+
+  __HAL_SAI_DISABLE(&SaiHandle);
+
+  SaiHandle.Init.AudioMode      = SAI_MODEMASTER_TX;
+  SaiHandle.Init.Synchro        = SAI_ASYNCHRONOUS;
+  SaiHandle.Init.OutputDrive    = SAI_OUTPUTDRIVE_ENABLE;
+  SaiHandle.Init.NoDivider      = SAI_MASTERDIVIDER_ENABLE;
+  SaiHandle.Init.FIFOThreshold  = SAI_FIFOTHRESHOLD_1QF;
+  SaiHandle.Init.AudioFrequency = SampleRate;
+  SaiHandle.Init.Protocol       = SAI_FREE_PROTOCOL;
+  SaiHandle.Init.DataSize       = SAI_DATASIZE_16;
+  SaiHandle.Init.FirstBit       = SAI_FIRSTBIT_MSB;
+  SaiHandle.Init.ClockStrobing  = SAI_CLOCKSTROBING_FALLINGEDGE;
+
+  SaiHandle.FrameInit.FrameLength       = 32;
+  SaiHandle.FrameInit.ActiveFrameLength = 16;
+  SaiHandle.FrameInit.FSDefinition      = SAI_FS_CHANNEL_IDENTIFICATION;
+  SaiHandle.FrameInit.FSPolarity        = SAI_FS_ACTIVE_LOW;
+  SaiHandle.FrameInit.FSOffset          = SAI_FS_BEFOREFIRSTBIT;
+
+  SaiHandle.SlotInit.FirstBitOffset = 0;
+  SaiHandle.SlotInit.SlotSize       = SAI_SLOTSIZE_DATASIZE;
+  SaiHandle.SlotInit.SlotNumber     = 2; 
+  SaiHandle.SlotInit.SlotActive     = (SAI_SLOTACTIVE_0 | SAI_SLOTACTIVE_1);
+
+  if(HAL_OK != HAL_SAI_Init(&SaiHandle))
+  {
+    Error_Handler();
+  }
+  
+  /* Enable SAI to generate clock used by audio driver */
+  __HAL_SAI_ENABLE(&SaiHandle);
+  
+  /* Initialize audio driver */
+  if(WM8994_ID != wm8994_drv.ReadID(AUDIO_I2C_ADDRESS))
+  {
+    Error_Handler();
+  }
+  
+  audio_drv = &wm8994_drv;
+  audio_drv->Reset(AUDIO_I2C_ADDRESS);  
+  if(0 != audio_drv->Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_HEADPHONE, 20, SampleRate ))
+  {
+    Error_Handler();
+  }
+}
 
 FIL fi;
 
@@ -191,6 +263,7 @@ void screenClearCallback(void)
 {
 	BSP_LCD_Clear(LCD_COLOR_BLACK);
 }
+#if 0
 void updateScreenCallback(void)
 {
 	uint32_t xPos = (BSP_LCD_GetXSize() - decoder.GetGifWidth())/2;
@@ -201,7 +274,7 @@ void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t
 {
 	*((uint32_t*)(IMAGEBUFF_ADDRESS+(x+y* (decoder.GetGifWidth()))*4)) = ((uint16_t)red << 16) | ((uint16_t)green << 8) | (blue);
 }
-
+#endif
 bool fileSeekCallback(unsigned long position) 
 {
 	if (f_lseek(&fi, position) == FR_OK)
@@ -260,6 +333,11 @@ int fileReadBlockCallback(void * buffer, int numberOfBytes)
   * @retval int
   */
 uint32_t FrameOffset=0;
+const uint16_t block_size = 40960;
+uint16_t buff[block_size];
+#define PLAY_HEADER          0x2C
+bool flag = 0;
+Wavheader Wheader;
 int main(void)
 {
   /* USER CODE BEGIN 1 */
@@ -268,9 +346,9 @@ int main(void)
 
 	uint8_t SD_state = MSD_OK, res;
 	DIR dir;
-	uint32_t length=0;
+	unsigned int length=0;
 	uint32_t AlphaInvertConfig;
-	char temp[255];
+
   /* Enable I-Cache---------------------------------------------------------*/
   SCB_EnableICache();
 
@@ -312,17 +390,43 @@ int main(void)
 	   JPEG_Handle.Instance = JPEG;
 	   
 
+	   DMAUartHandle.Instance				  = DMA2_Stream7;
+	   DMAUartHandle.Init.Channel             = DMA_CHANNEL_4;
+	   DMAUartHandle.Init.Direction           = DMA_MEMORY_TO_PERIPH;
+	   DMAUartHandle.Init.PeriphInc           = DMA_PINC_DISABLE;
+	   DMAUartHandle.Init.MemInc              = DMA_MINC_ENABLE;
+	   DMAUartHandle.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	   DMAUartHandle.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
+	   DMAUartHandle.Init.Mode                = DMA_NORMAL;
+	   DMAUartHandle.Init.Priority            = DMA_PRIORITY_LOW;
+	   DMAUartHandle.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+	   HAL_DMA_Init(&DMAUartHandle);
+
+	   HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+	   HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+
+
+	   	UartHandle.Instance        = USARTx;
+	    UartHandle.Init.BaudRate   = 9600;
+	    UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
+	    UartHandle.Init.StopBits   = UART_STOPBITS_1;
+	    UartHandle.Init.Parity     = UART_PARITY_ODD;
+	    UartHandle.Init.HwFlowCtl  = UART_HWCONTROL_NONE;
+	    UartHandle.Init.Mode       = UART_MODE_TX_RX;
+	    UartHandle.Init.OverSampling = UART_OVERSAMPLING_16;
+	    if (HAL_UART_Init(&UartHandle) != HAL_OK)
+	    {
+	      /* Initialization Error */
+	      Error_Handler();
+	    }
+	    __HAL_LINKDMA(&UartHandle, hdmatx, DMAUartHandle);
+	    /* Peripheral interrupt init*/
+	    HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
+	    HAL_NVIC_EnableIRQ(USART1_IRQn);
+	   // UartHandle.hdmarx = &DMAUartHandle;
   /* USER CODE BEGIN 2 */
 	   // gif decode callback function set
-	decoder.setScreenClearCallback(screenClearCallback);
-	decoder.setUpdateScreenCallback(updateScreenCallback);
-	decoder.setDrawPixelCallback(drawPixelCallback);
 
-	decoder.setFileSeekCallback(fileSeekCallback);
-	decoder.setFilePositionCallback(filePositionCallback);
-	decoder.setFileReadCallback(fileReadCallback);
-	decoder.setFileReadBlockCallback(fileReadBlockCallback);
-  /* USER CODE END 2 */
     //BSP_LCD_SetBackColor(LCD_COLOR_BLACK);
     SD_state = BSP_SD_Init();
 
@@ -332,23 +436,41 @@ int main(void)
 
     if (f_mount(&fs,(char*)"",1) == FR_OK)
     {
-     
-      if (f_open(&fi, "gif.gif", FA_READ) == FR_OK)
+      if (f_open(&fi, "Music.wav", FA_READ) == FR_OK)
       {
-    	decoder.startDecoding();
-        while(1)
-        {
-          decoder.decodeFrame();
-        }
+    	  f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
+          f_lseek(&fi, PLAY_HEADER);
+          f_read(&fi, buff, block_size*2, &length);
+          Playback_Init(Wheader.Samplerate);
+          HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+          while(1)
+          {
+            if (flag == true)
+            {
+              flag = false;
+              BSP_LED_Toggle(LED1);      
+              if (f_tell(&fi) == f_size(&fi))
+              {
+                f_lseek(&fi, PLAY_HEADER);
+              }   
+            }   
+            else
+            {
+            	if (UartHandle.gState == HAL_UART_STATE_READY)
+            	{
+            		HAL_UART_Transmit_DMA(&UartHandle, (uint8_t *)"Hello World\n\r", 19);
+            	}
+            }
+          }
       }
-      
     }
 
     while(1)
     {
       BSP_LED_Toggle(LED1);
       HAL_Delay(500);
-	}
+    }
+
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
@@ -525,6 +647,110 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* USER CODE END Error_Handler_Debug */
+}
+
+/**
+  * @brief  SAI MSP Init.
+  * @param  hsai : pointer to a SAI_HandleTypeDef structure that contains
+  *                the configuration information for SAI module.
+  * @retval None
+  */
+void HAL_SAI_MspInit(SAI_HandleTypeDef *hsai)
+{
+  GPIO_InitTypeDef  GPIO_Init;
+  
+  /* Enable SAI1 clock */
+  __HAL_RCC_SAI1_CLK_ENABLE();
+  
+  /* Configure GPIOs used for SAI2 */
+  AUDIO_SAIx_MCLK_ENABLE();
+  AUDIO_SAIx_SCK_ENABLE();
+  AUDIO_SAIx_FS_ENABLE();
+  AUDIO_SAIx_SD_ENABLE();
+  
+  GPIO_Init.Mode      = GPIO_MODE_AF_PP;
+  GPIO_Init.Pull      = GPIO_NOPULL;
+  GPIO_Init.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
+  
+  GPIO_Init.Alternate = AUDIO_SAIx_FS_AF;
+  GPIO_Init.Pin       = AUDIO_SAIx_FS_PIN;
+  HAL_GPIO_Init(AUDIO_SAIx_FS_GPIO_PORT, &GPIO_Init);
+  GPIO_Init.Alternate = AUDIO_SAIx_SCK_AF;
+  GPIO_Init.Pin       = AUDIO_SAIx_SCK_PIN;
+  HAL_GPIO_Init(AUDIO_SAIx_SCK_GPIO_PORT, &GPIO_Init);
+  GPIO_Init.Alternate = AUDIO_SAIx_SD_AF;
+  GPIO_Init.Pin       = AUDIO_SAIx_SD_PIN;
+  HAL_GPIO_Init(AUDIO_SAIx_SD_GPIO_PORT, &GPIO_Init);
+  GPIO_Init.Alternate = AUDIO_SAIx_MCLK_AF;
+  GPIO_Init.Pin       = AUDIO_SAIx_MCLK_PIN;
+  HAL_GPIO_Init(AUDIO_SAIx_MCLK_GPIO_PORT, &GPIO_Init);
+  
+  /* Configure DMA used for SAI2 */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  if(hsai->Instance == AUDIO_SAIx)
+  {
+    hSaiDma.Init.Channel             = DMA_CHANNEL_10;
+    hSaiDma.Init.Direction           = DMA_MEMORY_TO_PERIPH;
+    hSaiDma.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hSaiDma.Init.MemInc              = DMA_MINC_ENABLE;
+    hSaiDma.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+    hSaiDma.Init.MemDataAlignment    = DMA_MDATAALIGN_HALFWORD;
+    hSaiDma.Init.Mode                = DMA_CIRCULAR;
+    hSaiDma.Init.Priority            = DMA_PRIORITY_HIGH;
+    hSaiDma.Init.FIFOMode            = DMA_FIFOMODE_ENABLE;      
+    hSaiDma.Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
+    hSaiDma.Init.MemBurst            = DMA_MBURST_SINGLE;         
+    hSaiDma.Init.PeriphBurst         = DMA_PBURST_SINGLE;         
+
+    /* Select the DMA instance to be used for the transfer : DMA2_Stream6 */
+    hSaiDma.Instance                 = DMA2_Stream6;
+  
+    /* Associate the DMA handle */
+    __HAL_LINKDMA(hsai, hdmatx, hSaiDma);
+
+    /* Deinitialize the Stream for new transfer */
+    HAL_DMA_DeInit(&hSaiDma);
+
+    /* Configure the DMA Stream */
+    if (HAL_OK != HAL_DMA_Init(&hSaiDma))
+    {
+      Error_Handler();
+    }
+  }
+	
+  HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 0x01, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
+}
+
+/**
+  * @brief Tx Transfer completed callbacks.
+  * @param  hsai : pointer to a SAI_HandleTypeDef structure that contains
+  *                the configuration information for SAI module.
+  * @retval None
+  */
+void BSP_AUDIO_OUT_TransferComplete_CallBack()
+{
+	unsigned int len;
+  /* Manage the remaining file size and new address offset: This function
+     should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
+	f_read(&fi, &buff[block_size/2], block_size, &len);
+  flag = true;
+
+}
+/**
+  * @brief Tx Transfer Half completed callbacks
+  * @param  hsai : pointer to a SAI_HandleTypeDef structure that contains
+  *                the configuration information for SAI module.
+  * @retval None
+  */
+void BSP_AUDIO_OUT_HalfTransfer_CallBack()
+{
+  unsigned int len;
+  /* Manage the remaining file size and new address offset: This function
+     should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
+	f_read(&fi, &buff[0], block_size, &len);
+  flag = true;
 }
 
 #ifdef  USE_FULL_ASSERT

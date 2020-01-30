@@ -36,6 +36,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f7xx_it.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -72,9 +73,10 @@
 
 /* External variables --------------------------------------------------------*/
 DMA2D_HandleTypeDef hdma2d;
-
+extern SAI_HandleTypeDef SaiHandle;
 extern LTDC_HandleTypeDef hltdc_discovery;
 extern DSI_HandleTypeDef hdsi_discovery;
+extern UART_HandleTypeDef UartHandle;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -273,7 +275,14 @@ void DMA2_Stream6_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(SaiHandle.hdmatx);
 }
-
+void DMA2_Stream7_IRQHandler(void)
+{
+	HAL_DMA_IRQHandler(UartHandle.hdmatx);
+}
+void USART1_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&UartHandle);
+}
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
