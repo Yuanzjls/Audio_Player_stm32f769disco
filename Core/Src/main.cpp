@@ -113,7 +113,7 @@ static void CopyPicture(uint32_t *pSrc,
 void vAssertCalled( unsigned long ulLine, const char * const pcFileName )
 {
 static portBASE_TYPE xPrinted = pdFALSE;
-volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 0;
+volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 12;
 
     /* Parameters are not used. */
     ( void ) ulLine;
@@ -383,6 +383,7 @@ static void vTaskMusic(void *pvParameters)
   FILINFO fno;
   FATFS fs;
   unsigned int length=0;
+  uint32_t ulNotificationValue;
   if (f_mount(&fs,(char*)"",1) == FR_OK)
   {
     if (f_open(&fi, "Music.wav", FA_READ) == FR_OK)
@@ -394,19 +395,17 @@ static void vTaskMusic(void *pvParameters)
         HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
         while(1)
         {
-          if (flag == true)
+           ulNotificationValue = ulTaskNotifyTake( pdTRUE,
+                                            200);
+          if (ulNotificationValue > 0)
           {
-            flag = false;
             BSP_LED_Toggle(LED1);
             if (f_tell(&fi) == f_size(&fi))
             {
               f_lseek(&fi, PLAY_HEADER);
             }   
           }   
-          else
-          {
-            vTaskDelay(200);
-          }
+
         }
     }
   }
@@ -415,8 +414,8 @@ static void vTaskMusic(void *pvParameters)
 
 static void AppTaskCreate(void)
 {
-  xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 4, &xTaskLed);
-  xTaskCreate(vTaskMusic, "TaskMusi", 1024, NULL, 1, &xTaskMusic);
+  xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 1, &xTaskLed);
+  xTaskCreate(vTaskMusic, "TaskMusic", 1024, NULL, 4, &xTaskMusic);
 }
 
 int main(void)
@@ -796,8 +795,17 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack()
   /* Manage the remaining file size and new address offset: This function
      should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
 	f_read(&fi, &buff[block_size/2], block_size, &len);
-  flag = true;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
+    /* Notify the task that the transmission is complete. */
+    vTaskNotifyGiveFromISR( xTaskMusic, &xHigherPriorityTaskWoken );
+
+
+    /* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
+    should be performed to ensure the interrupt returns directly to the highest
+    priority task.  The macro used for this purpose is dependent on the port in
+    use and may be called portEND_SWITCHING_ISR(). */
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
 }
 /**
   * @brief Tx Transfer Half completed callbacks
@@ -811,7 +819,17 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack()
   /* Manage the remaining file size and new address offset: This function
      should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
 	f_read(&fi, &buff[0], block_size, &len);
-  flag = true;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+  /* Notify the task that the transmission is complete. */
+  vTaskNotifyGiveFromISR( xTaskMusic, &xHigherPriorityTaskWoken );
+
+
+  /* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
+  should be performed to ensure the interrupt returns directly to the highest
+  priority task.  The macro used for this purpose is dependent on the port in
+  use and may be called portEND_SWITCHING_ISR(). */
+  portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
 }
 
 #ifdef  USE_FULL_ASSERT
