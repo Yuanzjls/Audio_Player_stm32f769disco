@@ -383,7 +383,7 @@ static void vTaskMusic(void *pvParameters)
   FILINFO fno;
   FATFS fs;
   unsigned int length=0;
-  uint32_t ulNotificationValue;
+  uint32_t ulNotifiedValue;
   if (f_mount(&fs,(char*)"",1) == FR_OK)
   {
     if (f_open(&fi, "Music.wav", FA_READ) == FR_OK)
@@ -395,17 +395,23 @@ static void vTaskMusic(void *pvParameters)
         HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
         while(1)
         {
-           ulNotificationValue = ulTaskNotifyTake( pdTRUE,
-                                            200);
-          if (ulNotificationValue > 0)
+          xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 500);
+          if (ulNotifiedValue)
           {
-            BSP_LED_Toggle(LED1);
-            if (f_tell(&fi) == f_size(&fi))
+            if (ulNotifiedValue  & 0x01)
+            {
+              f_read(&fi, &buff[block_size/2], block_size, &length);
+            }   
+            if (ulNotifiedValue  & 0x02)
+            {
+              f_read(&fi, &buff[0], block_size, &length);
+            }
+            if (length != block_size)
             {
               f_lseek(&fi, PLAY_HEADER);
-            }   
-          }   
-
+            }
+            BSP_LED_Toggle(LED_RED);
+          }
         }
     }
   }
@@ -512,18 +518,9 @@ int main(void)
 	   // gif decode callback function set
 
     //BSP_LCD_SetBackColor(LCD_COLOR_BLACK);
-    BSP_SD_Init();
-
-
-
-
-
-
-    
+    BSP_SD_Init();    
     BSP_LED_Init(LED1);
     BSP_LED_Init(LED2);
-
-
     AppTaskCreate();
     vTaskStartScheduler();
 
@@ -789,16 +786,17 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef *hsai)
   *                the configuration information for SAI module.
   * @retval None
   */
+
 void BSP_AUDIO_OUT_TransferComplete_CallBack()
 {
-	unsigned int len;
+	//unsigned int len;
   /* Manage the remaining file size and new address offset: This function
      should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
-	f_read(&fi, &buff[block_size/2], block_size, &len);
+	//f_read(&fi, &buff[block_size/2], block_size, &len);
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     /* Notify the task that the transmission is complete. */
-    vTaskNotifyGiveFromISR( xTaskMusic, &xHigherPriorityTaskWoken );
+    xTaskNotifyFromISR( xTaskMusic, 1, eSetBits, &xHigherPriorityTaskWoken);
 
 
     /* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
@@ -815,14 +813,14 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack()
   */
 void BSP_AUDIO_OUT_HalfTransfer_CallBack()
 {
-  unsigned int len;
+  //unsigned int len;
   /* Manage the remaining file size and new address offset: This function
      should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
-	f_read(&fi, &buff[0], block_size, &len);
+	//f_read(&fi, &buff[0], block_size, &len);
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   /* Notify the task that the transmission is complete. */
-  vTaskNotifyGiveFromISR( xTaskMusic, &xHigherPriorityTaskWoken );
+  xTaskNotifyFromISR( xTaskMusic, 2, eSetBits, &xHigherPriorityTaskWoken );
 
 
   /* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
