@@ -10,6 +10,7 @@
 #include "GifDecoder.h"
 #include "wavdecoder.h"
 #include <stdio.h>
+
 //#include "stm32f769i_discovery_lcd.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -78,6 +79,7 @@ RTC_HandleTypeDef hrtc;
 UART_HandleTypeDef UartHandle;
 DMA_HandleTypeDef DMAUartHandle;
 FIL JPEG_File;  /* File object */
+extern __IO uint32_t uwTick;
 /* USER CODE BEGIN PV */
 /*GIF Decode Varible part*/
 
@@ -93,6 +95,8 @@ const uint16_t kMatrixHeight = 480;       // known working: 16, 32, 48, 64
 
 /* USER CODE END PV */
 
+
+
 /* Private function prototypes -----------------------------------------------*/
  void SystemClock_Config(void);
 static void MX_RTC_Init(void);
@@ -105,6 +109,28 @@ static void CopyPicture(uint32_t *pSrc,
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
+
+void vAssertCalled( unsigned long ulLine, const char * const pcFileName )
+{
+static portBASE_TYPE xPrinted = pdFALSE;
+volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 0;
+
+    /* Parameters are not used. */
+    ( void ) ulLine;
+    ( void ) pcFileName;
+
+    taskENTER_CRITICAL();
+    {
+        /* You can step out of this function to debug the assertion by using
+        the debugger to set ulSetToNonZeroInDebuggerToContinue to a non-zero
+        value. */
+        while( ulSetToNonZeroInDebuggerToContinue == 0 )
+        {
+        }
+    }
+    taskEXIT_CRITICAL();
+}
+
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
@@ -339,16 +365,74 @@ uint16_t buff[block_size];
 #define PLAY_HEADER          0x2C
 bool flag = 0;
 Wavheader Wheader;
+static TaskHandle_t xTaskLed = NULL;
+static TaskHandle_t xTaskMusic = NULL;
+static void vTaskLed(void *pvParameters)
+{
+  while(1)
+  {
+    BSP_LED_Toggle(LED2);
+    vTaskDelay(400);
+  }
+}
+
+static void vTaskMusic(void *pvParameters)
+{
+  FRESULT fr;
+  DIR dj;
+  FILINFO fno;
+  FATFS fs;
+  unsigned int length=0;
+  if (f_mount(&fs,(char*)"",1) == FR_OK)
+  {
+    if (f_open(&fi, "Music.wav", FA_READ) == FR_OK)
+    {
+    	f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
+        f_lseek(&fi, PLAY_HEADER);
+        f_read(&fi, buff, block_size*2, &length);
+        Playback_Init(Wheader.Samplerate);
+        HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+        while(1)
+        {
+          if (flag == true)
+          {
+            flag = false;
+            BSP_LED_Toggle(LED1);
+            if (f_tell(&fi) == f_size(&fi))
+            {
+              f_lseek(&fi, PLAY_HEADER);
+            }   
+          }   
+          else
+          {
+            vTaskDelay(200);
+          }
+        }
+    }
+  }
+}
+
+
+static void AppTaskCreate(void)
+{
+  xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 4, &xTaskLed);
+  xTaskCreate(vTaskMusic, "TaskMusi", 1024, NULL, 1, &xTaskMusic);
+}
+
 int main(void)
 {
   /* USER CODE BEGIN 1 */
   /* USER CODE END 1 */
-	FATFS fs;
+	
 
 	uint8_t SD_state = MSD_OK, res;
-	DIR dir;
-	unsigned int length=0;
+
+	
 	uint32_t AlphaInvertConfig;
+
+  //__set_PRIMASK(1);
+
+
 
   /* Enable I-Cache---------------------------------------------------------*/
   SCB_EnableICache();
@@ -374,7 +458,7 @@ int main(void)
 
 	  MX_RTC_Init();
 	  BSP_LCD_Init();
-    
+
 	  BSP_SDRAM_Init();
 
 
@@ -383,13 +467,13 @@ int main(void)
 	  BSP_LCD_SelectLayer(1);
 	  BSP_LCD_Clear(LCD_COLOR_BLACK);
 
-	  BSP_LED_Init(LED1);
+
 	  /*##-1- JPEG Initialization ################################################*/
 	  /* Init The JPEG Color Look Up Tables used for YCbCr to RGB conversion   */
-	  
+
 	  /* Init the HAL JPEG driver */
 	   JPEG_Handle.Instance = JPEG;
-	   
+
 
 	   DMAUartHandle.Instance				  = DMA2_Stream7;
 	   DMAUartHandle.Init.Channel             = DMA_CHANNEL_4;
@@ -429,48 +513,24 @@ int main(void)
 	   // gif decode callback function set
 
     //BSP_LCD_SetBackColor(LCD_COLOR_BLACK);
-    SD_state = BSP_SD_Init();
+    BSP_SD_Init();
 
-    FRESULT fr;
-    DIR dj;
-    FILINFO fno;
 
-    if (f_mount(&fs,(char*)"",1) == FR_OK)
-    {
-      if (f_open(&fi, "Music.wav", FA_READ) == FR_OK)
-      {
-    	  f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
-          f_lseek(&fi, PLAY_HEADER);
-          f_read(&fi, buff, block_size*2, &length);
-          Playback_Init(Wheader.Samplerate);
-          HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
-          while(1)
-          {
-            if (flag == true)
-            {
-              flag = false;
-              BSP_LED_Toggle(LED1);      
-              if (f_tell(&fi) == f_size(&fi))
-              {
-                f_lseek(&fi, PLAY_HEADER);
-              }   
-            }   
-            else
-            {
-            	if (UartHandle.gState == HAL_UART_STATE_READY)
-            	{
-            		printf("Hello world, %.4f\r\n", 3.1415926);
-            	}
-            }
-          }
-      }
-    }
 
-    while(1)
-    {
-      BSP_LED_Toggle(LED1);
-      HAL_Delay(500);
-    }
+
+
+
+    
+    BSP_LED_Init(LED1);
+    BSP_LED_Init(LED2);
+
+
+    AppTaskCreate();
+    vTaskStartScheduler();
+
+    while(1);
+    
+
 
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */

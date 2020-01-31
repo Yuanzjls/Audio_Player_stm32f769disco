@@ -87,7 +87,8 @@
 			( pulStack[ 2 ] != ulCheckValue ) ||														\
 			( pulStack[ 3 ] != ulCheckValue ) )															\
 		{																								\
-			vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );	\
+			/*vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );	*/\
+			while(1);\
 		}																								\
 	}
 
