@@ -77,6 +77,7 @@ extern SAI_HandleTypeDef SaiHandle;
 extern LTDC_HandleTypeDef hltdc_discovery;
 extern DSI_HandleTypeDef hdsi_discovery;
 extern UART_HandleTypeDef UartHandle;
+extern SD_HandleTypeDef uSdHandle;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -288,6 +289,29 @@ void USART1_IRQHandler(void)
   HAL_UART_IRQHandler(&UartHandle);
 }
 /* USER CODE BEGIN 1 */
+void DMA2_Stream0_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(uSdHandle.hdmarx);
+}
 
+/**
+  * @brief  This function handles DMA2 Stream 6 interrupt request.
+  * @param  None
+  * @retval None
+  */
+void DMA2_Stream5_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(uSdHandle.hdmatx);
+}
+
+/**
+  * @brief  This function handles SDIO interrupt request.
+  * @param  None
+  * @retval None
+  */
+void SDMMC2_IRQHandler(void)
+{
+  HAL_SD_IRQHandler(&uSdHandle);
+}
 /* USER CODE END 1 */
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

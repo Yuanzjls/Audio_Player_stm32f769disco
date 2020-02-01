@@ -261,9 +261,9 @@
 /      can be opened simultaneously under file lock control. Note that the file
 /      lock control is independent of re-entrancy. */
 
-
-/* #include <somertos.h>	// O/S definitions */
-#define FF_FS_REENTRANT	0
+typedef void *HANDLE;
+#include "FreeRTOS.h"	// O/S definitions */
+#define FF_FS_REENTRANT	1
 #define FF_FS_TIMEOUT	1000
 #define FF_SYNC_t		HANDLE
 /* The option FF_FS_REENTRANT switches the re-entrancy (thread safe) of the FatFs

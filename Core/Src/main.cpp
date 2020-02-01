@@ -406,7 +406,7 @@ static void vTaskMusic(void *pvParameters)
             {
               f_read(&fi, &buff[0], block_size, &length);
             }
-            if (length != block_size)
+            if (f_tell(&fi) == f_size(&fi))
             {
               f_lseek(&fi, PLAY_HEADER);
             }
@@ -421,7 +421,7 @@ static void vTaskMusic(void *pvParameters)
 static void AppTaskCreate(void)
 {
   xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 1, &xTaskLed);
-  xTaskCreate(vTaskMusic, "TaskMusic", 1024, NULL, 4, &xTaskMusic);
+  xTaskCreate(vTaskMusic, "TaskMusic", 512, NULL, 4, &xTaskMusic);
 }
 
 int main(void)
