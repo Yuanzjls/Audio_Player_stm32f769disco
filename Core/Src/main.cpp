@@ -335,9 +335,9 @@ static void vTaskLed(void *pvParameters)
 static void vTaskTouchEx(void *pvParameters)
 {
 	uint32_t ulNotificationValue;
-	static GUI_PID_STATE TS_State = {0, 0, 0, 0};
-	__IO TS_StateTypeDef  ts;
-	uint16_t xDiff, yDiff;
+	GUI_PID_STATE TS_State = {0, 0, 0, 0};
+	TS_StateTypeDef  ts;
+
 	while(1)
 	{
 		ulNotificationValue = ulTaskNotifyTake( pdTRUE, 50 );
@@ -345,40 +345,12 @@ static void vTaskTouchEx(void *pvParameters)
 		{
 		  BSP_TS_GetState((TS_StateTypeDef *)&ts);
 
-		  if((ts.touchX[0] >= LCD_GetXSize()) ||(ts.touchY[0] >= LCD_GetYSize()) )
+		  if (ts.touchDetected==1)
 		  {
-			ts.touchX[0] = 0;
-			ts.touchY[0] = 0;
-		  }
-
-		  xDiff = (TS_State.x > ts.touchX[0]) ? (TS_State.x - ts.touchX[0]) : (ts.touchX[0] - TS_State.x);
-		  yDiff = (TS_State.y > ts.touchY[0]) ? (TS_State.y - ts.touchY[0]) : (ts.touchY[0] - TS_State.y);
-
-		  if((TS_State.Pressed != ts.touchDetected ) ||
-			 (xDiff > 20 )||
-			   (yDiff > 20))
-		  {
-			TS_State.Pressed = ts.touchDetected;
-			TS_State.Layer = 0;
-			if(ts.touchDetected)
-			{
+			  TS_State.Pressed = 1;
 			  TS_State.x = ts.touchX[0];
-			  if(ts.touchY[0] < 240)
-			  {
-				TS_State.y = ts.touchY[0] ;
-			  }
-			  else
-			  {
-				TS_State.y = (ts.touchY[0] * 480) / 450;
-			  }
+			  TS_State.y = ts.touchY[0];
 			  GUI_TOUCH_StoreStateEx(&TS_State);
-			}
-			else
-			{
-			  GUI_TOUCH_StoreStateEx(&TS_State);
-			  TS_State.x = 0;
-			  TS_State.y = 0;
-			}
 		  }
 		}
 		else
