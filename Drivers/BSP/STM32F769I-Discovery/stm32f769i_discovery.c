@@ -94,10 +94,12 @@ EndDependencies */
   * @{
   */
 uint32_t GPIO_PIN[LEDn] = {LED1_PIN,
-                           LED2_PIN};
+                           LED2_PIN,
+						   LED3_PIN};
 
 GPIO_TypeDef* GPIO_PORT[LEDn] = {LED1_GPIO_PORT,
-                                 LED2_GPIO_PORT};
+                                 LED2_GPIO_PORT,
+								 LED3_GPIO_PORT};
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {WAKEUP_BUTTON_GPIO_PORT };
 

@@ -102,6 +102,8 @@ TaskHandle_t xTaskToNotify = NULL;
 /*-----------------------------------------------------------------------*/
 /* Read Sector(s)                                                        */
 /*-----------------------------------------------------------------------*/
+// To do, may add usb drive in the future, it needs another variable likeulNotificationValue.
+
 
 DRESULT disk_read (
 	BYTE pdrv,		/* Physical drive nmuber to identify the drive */

@@ -10,7 +10,9 @@
 #include "GifDecoder.h"
 #include "wavdecoder.h"
 #include <stdio.h>
-
+#include "GUI.h"
+#include <WM.h>
+#include <stm32f769i_discovery_ts.h>
 //#include "stm32f769i_discovery_lcd.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -132,54 +134,7 @@ volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 12;
 }
 
 
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-static void DMA2D_Config(uint32_t AlphaInvertConfig)
-{
-  HAL_StatusTypeDef hal_status = HAL_OK;
 
-  /* Configure the DMA2D Mode, Color Mode and output offset */
-  Dma2dHandle.Init.Mode         = DMA2D_M2M_BLEND; /* DMA2D mode Memory to Memory with Blending */
-  Dma2dHandle.Init.ColorMode    = DMA2D_OUTPUT_RGB565; /* output format of DMA2D */
-  Dma2dHandle.Init.OutputOffset = 0x0;  /* No offset in output */
-  Dma2dHandle.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;  /* No Output Alpha Inversion*/  
-  Dma2dHandle.Init.RedBlueSwap   = DMA2D_RB_REGULAR;     /* No Output Red & Blue swap */       
-
-  /* DMA2D Callbacks Configuration */
-  Dma2dHandle.XferCpltCallback  = NULL;
-  Dma2dHandle.XferErrorCallback = NULL;
-
-  /* Foreground layer Configuration */
-  Dma2dHandle.LayerCfg[1].AlphaMode = DMA2D_REPLACE_ALPHA;
-  Dma2dHandle.LayerCfg[1].InputAlpha = 0x40;
-  Dma2dHandle.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
-  Dma2dHandle.LayerCfg[1].InputOffset = 0x0; /* No offset in input */
-  Dma2dHandle.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR; /* No ForeGround Red a Blue swap */
-  Dma2dHandle.LayerCfg[1].AlphaInverted = AlphaInvertConfig; /* ForeGround Alpha inversion setting */
-  
-  /* Background layer Configuration */
-  Dma2dHandle.LayerCfg[0].AlphaMode = DMA2D_REPLACE_ALPHA;
-  Dma2dHandle.LayerCfg[0].InputAlpha = 0x40; /* fully opaque */
-  Dma2dHandle.LayerCfg[0].InputColorMode = DMA2D_INPUT_RGB565;
-  Dma2dHandle.LayerCfg[0].InputOffset = 0x0; /* No offset in input */
-  Dma2dHandle.LayerCfg[0].RedBlueSwap = DMA2D_RB_REGULAR; /* No BackGround Red a Blue swap */
-  Dma2dHandle.LayerCfg[0].AlphaInverted = !AlphaInvertConfig; /* No BackGround Alpha inversion */  
-
-  Dma2dHandle.Instance = DMA2D;
-
-  /* DMA2D Initialization */
-  hal_status = HAL_DMA2D_DeInit(&Dma2dHandle);
-//  OnError_Handler(hal_status != HAL_OK);
-  
-  hal_status = HAL_DMA2D_Init(&Dma2dHandle);
-//  OnError_Handler(hal_status != HAL_OK);
-
-  /* Apply DMA2D Foreground configuration */
-  HAL_DMA2D_ConfigLayer(&Dma2dHandle, 1);
-
-  /* Apply DMA2D Background configuration */
-  HAL_DMA2D_ConfigLayer(&Dma2dHandle, 0);
-}
 #if 0
 #define PATTERN_SEARCH_BUFFERSIZE 512
 uint8_t PatternSearchBuffer[PATTERN_SEARCH_BUFFERSIZE];
@@ -367,6 +322,8 @@ bool flag = 0;
 Wavheader Wheader;
 static TaskHandle_t xTaskLed = NULL;
 static TaskHandle_t xTaskMusic = NULL;
+static TaskHandle_t xTaskGUI = NULL;
+static TaskHandle_t xTaskTouchEx = NULL;
 static void vTaskLed(void *pvParameters)
 {
   while(1)
@@ -375,7 +332,62 @@ static void vTaskLed(void *pvParameters)
     vTaskDelay(400);
   }
 }
+static void vTaskTouchEx(void *pvParameters)
+{
+	uint32_t ulNotificationValue;
+	static GUI_PID_STATE TS_State = {0, 0, 0, 0};
+	__IO TS_StateTypeDef  ts;
+	uint16_t xDiff, yDiff;
+	while(1)
+	{
+		ulNotificationValue = ulTaskNotifyTake( pdTRUE, 50 );
+		if (ulNotificationValue==1)
+		{
+		  BSP_TS_GetState((TS_StateTypeDef *)&ts);
 
+		  if((ts.touchX[0] >= LCD_GetXSize()) ||(ts.touchY[0] >= LCD_GetYSize()) )
+		  {
+			ts.touchX[0] = 0;
+			ts.touchY[0] = 0;
+		  }
+
+		  xDiff = (TS_State.x > ts.touchX[0]) ? (TS_State.x - ts.touchX[0]) : (ts.touchX[0] - TS_State.x);
+		  yDiff = (TS_State.y > ts.touchY[0]) ? (TS_State.y - ts.touchY[0]) : (ts.touchY[0] - TS_State.y);
+
+		  if((TS_State.Pressed != ts.touchDetected ) ||
+			 (xDiff > 20 )||
+			   (yDiff > 20))
+		  {
+			TS_State.Pressed = ts.touchDetected;
+			TS_State.Layer = 0;
+			if(ts.touchDetected)
+			{
+			  TS_State.x = ts.touchX[0];
+			  if(ts.touchY[0] < 240)
+			  {
+				TS_State.y = ts.touchY[0] ;
+			  }
+			  else
+			  {
+				TS_State.y = (ts.touchY[0] * 480) / 450;
+			  }
+			  GUI_TOUCH_StoreStateEx(&TS_State);
+			}
+			else
+			{
+			  GUI_TOUCH_StoreStateEx(&TS_State);
+			  TS_State.x = 0;
+			  TS_State.y = 0;
+			}
+		  }
+		}
+		else
+		{
+			TS_State.Pressed = 0;
+			GUI_TOUCH_StoreStateEx(&TS_State);
+		}
+	}
+}
 static void vTaskMusic(void *pvParameters)
 {
   FRESULT fr;
@@ -386,13 +398,15 @@ static void vTaskMusic(void *pvParameters)
   uint32_t ulNotifiedValue;
   if (f_mount(&fs,(char*)"",1) == FR_OK)
   {
-    if (f_open(&fi, "Music.wav", FA_READ) == FR_OK)
-    {
-    	f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
-        f_lseek(&fi, PLAY_HEADER);
-        f_read(&fi, buff, block_size*2, &length);
-        Playback_Init(Wheader.Samplerate);
-        HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+	fr = f_findfirst(&dj, &fno, "", "*.wav");
+	if (fr == FR_OK && fno.fname[0])
+	{
+		f_open(&fi, fno.fname, FA_READ);
+		f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
+		f_lseek(&fi, PLAY_HEADER);
+		f_read(&fi, buff, block_size*2, &length);
+		Playback_Init(Wheader.Samplerate);
+		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
         while(1)
         {
           xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 500);
@@ -408,22 +422,75 @@ static void vTaskMusic(void *pvParameters)
             }
             if (f_tell(&fi) == f_size(&fi))
             {
-              f_lseek(&fi, PLAY_HEADER);
+            	fr = f_findnext(&dj, &fno);
+            	if (fr == FR_OK && fno.fname[0])
+            	{
+            		f_open(&fi, fno.fname, FA_READ);
+					f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
+					f_lseek(&fi, PLAY_HEADER);
+					f_read(&fi, buff, block_size*2, &length);
+					Playback_Init(Wheader.Samplerate);
+					HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+            	}
+            	else
+            	{
+            		fr = f_findfirst(&dj, &fno, "", "*.wav");
+            	}
             }
             BSP_LED_Toggle(LED_RED);
           }
         }
-    }
+	}
+
   }
 }
+//void vTimerLEDCallback(TimerHandle_t xTimer)
+//{
+//	BSP_LED_Toggle(LED3);
+//}
+void  vTaskGUI(void *pvParameters)
+{
 
-
+	while(1)
+	{
+		MainTask();
+	}
+}
+//higher number, higher priority
 static void AppTaskCreate(void)
 {
-  xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 1, &xTaskLed);
-  xTaskCreate(vTaskMusic, "TaskMusic", 512, NULL, 4, &xTaskMusic);
-}
+  xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 2, &xTaskLed);
+  xTaskCreate(vTaskMusic, "TaskMusic", 512, NULL, 3, &xTaskMusic);
+  xTaskCreate(vTaskGUI, "TaskGUI", 5120, NULL, 1, &xTaskGUI);
+  xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 4, &xTaskTouchEx);
 
+  //xTimerStart(xTimerCreate("Timer", 600, pdTRUE, (void *) 0, vTimerLEDCallback), 0);
+}
+static void MPU_Config(void)
+{
+  MPU_Region_InitTypeDef MPU_InitStruct;
+
+  /* Disable the MPU */
+  HAL_MPU_Disable();
+
+  /* Configure the MPU as Normal Non Cacheable for the SRAM1 and SRAM2 */
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+  MPU_InitStruct.BaseAddress = 0x20020000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+  MPU_InitStruct.SubRegionDisable = 0x00;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /* Enable the MPU */
+  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+}
 int main(void)
 {
   /* USER CODE BEGIN 1 */
@@ -435,15 +502,24 @@ int main(void)
 	
 	uint32_t AlphaInvertConfig;
 
-  //__set_PRIMASK(1);
 
 
 
-  /* Enable I-Cache---------------------------------------------------------*/
-  SCB_EnableICache();
+	MPU_Config();
+	SCB_InvalidateICache();
 
-  /* Enable D-Cache---------------------------------------------------------*/
-  SCB_EnableDCache();
+	  /* Enable branch prediction */
+	  SCB->CCR |= (1 <<18);
+	  __DSB();
+
+	  /* Invalidate I-Cache : ICIALLU register*/
+	  SCB_InvalidateICache();
+
+	  /* Enable I-Cache */
+	  SCB_EnableICache();
+
+	  SCB_InvalidateDCache();
+	  SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -460,17 +536,10 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-
+  /* Enable the CRC Module */
+  __HAL_RCC_CRC_CLK_ENABLE();
 	  MX_RTC_Init();
-	  BSP_LCD_Init();
-
-	  BSP_SDRAM_Init();
-
-
-	  /* Initialize LTDC layer 0 iused for Hint */
-	  BSP_LCD_LayerDefaultInit(1, LAYER1_ADDRESS);
-	  BSP_LCD_SelectLayer(1);
-	  BSP_LCD_Clear(LCD_COLOR_BLACK);
+	  //MPU_Config();
 
 
 	  /*##-1- JPEG Initialization ################################################*/
@@ -516,11 +585,20 @@ int main(void)
 	   // UartHandle.hdmarx = &DMAUartHandle;
   /* USER CODE BEGIN 2 */
 	   // gif decode callback function set
-
+	    /* Initializes the SDRAM device */
+	    BSP_SDRAM_Init();
     //BSP_LCD_SetBackColor(LCD_COLOR_BLACK);
     BSP_SD_Init();    
     BSP_LED_Init(LED1);
     BSP_LED_Init(LED2);
+    BSP_LED_Init(LED3);
+    BSP_TS_Init (800, 480);
+    BSP_TS_ITConfig();
+    GUI_Init();
+	WM_MULTIBUF_Enable(1);
+
+	/* Activate the use of memory device feature */
+	WM_SetCreateFlags(WM_CF_MEMDEV);
     AppTaskCreate();
     vTaskStartScheduler();
 
@@ -532,6 +610,16 @@ int main(void)
   /* USER CODE END 3 */
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+	if (TS_INT_PIN == GPIO_Pin)
+	{
+		vTaskNotifyGiveFromISR( xTaskTouchEx, &xHigherPriorityTaskWoken );
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken);
+	}
+}
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -633,17 +721,6 @@ static void MX_RTC_Init(void)
 }
 
 
-/* USER CODE BEGIN 4 */
-/**
-  * @brief  End of Refresh DSI callback.
-  * @param  hdsi: pointer to a DSI_HandleTypeDef structure that contains
-  *               the configuration information for the DSI.
-  * @retval None
-  */
-void HAL_DSI_EndOfRefreshCallback(DSI_HandleTypeDef *hdsi)
-{
-
-}
 
 
 /**

@@ -77,7 +77,8 @@ typedef enum
  LED1 = 0,
  LED_RED = LED1,
  LED2 = 1,
- LED_GREEN = LED2
+ LED_GREEN = LED2,
+ LED3 = 2
 } Led_TypeDef;
 
 /** @brief Button_TypeDef
@@ -133,18 +134,20 @@ typedef enum
   * @{
   */
 /* Always four leds for all revisions of Discovery boards */
-#define LEDn                             ((uint8_t)2)
+#define LEDn                             ((uint8_t)3)
 
 
 /* 2 Leds are connected to MCU directly on PJ13 and PJ5 */
 #define LED1_GPIO_PORT                   ((GPIO_TypeDef*)GPIOJ)
 #define LED2_GPIO_PORT                   ((GPIO_TypeDef*)GPIOJ)
+#define LED3_GPIO_PORT                   ((GPIO_TypeDef*)GPIOA)
 
-#define LEDx_GPIO_CLK_ENABLE()           __HAL_RCC_GPIOJ_CLK_ENABLE()
-#define LEDx_GPIO_CLK_DISABLE()          __HAL_RCC_GPIOJ_CLK_DISABLE()
+#define LEDx_GPIO_CLK_ENABLE()           __HAL_RCC_GPIOJ_CLK_ENABLE(); __HAL_RCC_GPIOA_CLK_ENABLE()
+#define LEDx_GPIO_CLK_DISABLE()          __HAL_RCC_GPIOJ_CLK_DISABLE(); __HAL_RCC_GPIOA_CLK_DISABLE()
 
 #define LED1_PIN                         ((uint32_t)GPIO_PIN_13)
 #define LED2_PIN                         ((uint32_t)GPIO_PIN_5)
+#define LED3_PIN                         ((uint32_t)GPIO_PIN_12)
 
 /**
   * @}

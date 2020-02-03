@@ -61,6 +61,7 @@ extern "C" {
 #include "task.h"
 #include "queue.h"
 #include "croutine.h"
+#include "timers.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* SAI peripheral configuration defines */

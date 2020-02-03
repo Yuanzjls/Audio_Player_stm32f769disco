@@ -1,5 +1,8 @@
 #ifndef _wavdecoder_h_
 #define _wavdecoder_h_
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <stdint.h>
 
@@ -21,5 +24,7 @@ typedef struct
     uint32_t Subchunk2Size;
 }Wavheader;
 
-
+#ifdef __cplusplus
+}
+#endif
 #endif

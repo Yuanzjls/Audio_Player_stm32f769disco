@@ -74,8 +74,8 @@
 /* External variables --------------------------------------------------------*/
 DMA2D_HandleTypeDef hdma2d;
 extern SAI_HandleTypeDef SaiHandle;
-extern LTDC_HandleTypeDef hltdc_discovery;
-extern DSI_HandleTypeDef hdsi_discovery;
+extern LTDC_HandleTypeDef hltdc;
+extern DSI_HandleTypeDef hdsi;
 extern UART_HandleTypeDef UartHandle;
 extern SD_HandleTypeDef uSdHandle;
 /* USER CODE BEGIN EV */
@@ -230,7 +230,7 @@ void LTDC_IRQHandler(void)
   /* USER CODE BEGIN LTDC_IRQn 0 */
 
   /* USER CODE END LTDC_IRQn 0 */
-  HAL_LTDC_IRQHandler(&hltdc_discovery);
+  //HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
 
   /* USER CODE END LTDC_IRQn 1 */
@@ -239,7 +239,7 @@ void LTDC_IRQHandler(void)
 /**
   * @brief This function handles DMA2D global interrupt.
   */
-void DMA2D_IRQHandler(void)
+__weak void DMA2D_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2D_IRQn 0 */
 
@@ -253,12 +253,12 @@ void DMA2D_IRQHandler(void)
 /**
   * @brief This function handles DSI global interrupt.
   */
-void DSI_IRQHandler(void)
+__weak void DSI_IRQHandler(void)
 {
   /* USER CODE BEGIN DSI_IRQn 0 */
 
   /* USER CODE END DSI_IRQn 0 */
-  HAL_DSI_IRQHandler(&hdsi_discovery);
+  HAL_DSI_IRQHandler(&hdsi);
   /* USER CODE BEGIN DSI_IRQn 1 */
 
   /* USER CODE END DSI_IRQn 1 */
@@ -313,5 +313,12 @@ void SDMMC2_IRQHandler(void)
 {
   HAL_SD_IRQHandler(&uSdHandle);
 }
+/* USER CODE BEGIN 1 */
+void EXTI15_10_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(WAKEUP_BUTTON_PIN);
+  HAL_GPIO_EXTI_IRQHandler(TS_INT_PIN);
+}
+
 /* USER CODE END 1 */
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
