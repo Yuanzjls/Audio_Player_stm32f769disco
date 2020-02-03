@@ -335,29 +335,47 @@ static void vTaskLed(void *pvParameters)
 static void vTaskTouchEx(void *pvParameters)
 {
 	uint32_t ulNotificationValue;
-	GUI_PID_STATE TS_State = {0, 0, 0, 0};
+	//GUI_PID_STATE TS_State = {0, 0, 0, 0};
 	TS_StateTypeDef  ts;
+  GUI_MTOUCH_EVENT gEvent;
+  GUI_MTOUCH_INPUT gInput[2];
 
+  gEvent.LayerIndex =0;
+  gEvent.NumPoints = 2;
+  gInput[0].Id = 0;
+  gInput[1].Id = 0;
 	while(1)
 	{
 		ulNotificationValue = ulTaskNotifyTake( pdTRUE, 50 );
+    gEvent.TimeStamp = xTaskGetTickCount();
+
 		if (ulNotificationValue==1)
 		{
 		  BSP_TS_GetState((TS_StateTypeDef *)&ts);
-
+      
 		  if (ts.touchDetected==1)
 		  {
-			  TS_State.Pressed = 1;
-			  TS_State.x = ts.touchX[0];
-			  TS_State.y = ts.touchY[0];
-			  GUI_TOUCH_StoreStateEx(&TS_State);
+			  gInput[0].Flags = GUI_MTOUCH_FLAG_DOWN;
+        gInput[1].Flags = GUI_MTOUCH_FLAG_UP;
 		  }
+      else if (ts.touchDetected==2)
+      {
+        gInput[0].Flags = GUI_MTOUCH_FLAG_DOWN;
+        gInput[1].Flags = GUI_MTOUCH_FLAG_DOWN;
+      }
+      gInput[0].x = ts.touchX[0];
+			gInput[0].y = ts.touchY[0];
+      
+      gInput[1].x = ts.touchX[1];
+			gInput[1].y = ts.touchY[1];
+      
 		}
 		else
 		{
-			TS_State.Pressed = 0;
-			GUI_TOUCH_StoreStateEx(&TS_State);
+      gInput[0].Flags = GUI_MTOUCH_FLAG_UP;
+      gInput[1].Flags = GUI_MTOUCH_FLAG_UP;			
 		}
+    GUI_MTOUCH_StoreEvent(&gEvent, gInput);
 	}
 }
 static void vTaskMusic(void *pvParameters)
@@ -567,10 +585,11 @@ int main(void)
     BSP_TS_Init (800, 480);
     BSP_TS_ITConfig();
     GUI_Init();
-	WM_MULTIBUF_Enable(1);
+  	WM_MULTIBUF_Enable(1);
 
 	/* Activate the use of memory device feature */
-	WM_SetCreateFlags(WM_CF_MEMDEV);
+	  WM_SetCreateFlags(WM_CF_MEMDEV);
+    GUI_MTOUCH_Enable(1);
     AppTaskCreate();
     vTaskStartScheduler();
 
