@@ -258,7 +258,7 @@ __weak void DSI_IRQHandler(void)
   /* USER CODE BEGIN DSI_IRQn 0 */
 
   /* USER CODE END DSI_IRQn 0 */
-  HAL_DSI_IRQHandler(&hdsi);
+ // HAL_DSI_IRQHandler(&hdsi);
   /* USER CODE BEGIN DSI_IRQn 1 */
 
   /* USER CODE END DSI_IRQn 1 */

@@ -44,7 +44,7 @@ extern "C" {
 
 /* Set Multi-touch as non supported */
 #ifndef TS_MULTI_TOUCH_SUPPORTED
-  #define TS_MULTI_TOUCH_SUPPORTED 1
+  #define TS_MULTI_TOUCH_SUPPORTED 0
 #endif
 
 /* Set Auto-calibration as non supported */  

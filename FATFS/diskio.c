@@ -10,7 +10,7 @@
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
 #include "stm32f769i_discovery_sd.h"
-#include "task.h"
+#include "semphr.h"
 /* Definitions of physical drive number for each drive */
 #define DEV_RAM		1	/* Example: Map Ramdisk to physical drive 0 */
 #define DEV_MMC		0	/* Example: Map MMC/SD card to physical drive 1 */
@@ -60,7 +60,7 @@ DSTATUS disk_status (
 }
 
 
-
+SemaphoreHandle_t xSemaphore;
 /*-----------------------------------------------------------------------*/
 /* Inidialize a Drive                                                    */
 /*-----------------------------------------------------------------------*/
@@ -82,7 +82,7 @@ DSTATUS disk_initialize (
 
 	case DEV_MMC :
 		stat = BSP_SD_Init();
-
+		xSemaphore = xSemaphoreCreateBinary();
 		// translate the reslut code here
 
 		return stat;
@@ -97,7 +97,7 @@ DSTATUS disk_initialize (
 	return STA_NOINIT;
 }
 
-TaskHandle_t xTaskToNotify = NULL;
+
 
 /*-----------------------------------------------------------------------*/
 /* Read Sector(s)                                                        */
@@ -114,7 +114,7 @@ DRESULT disk_read (
 {
 	DRESULT res;
 	int result;
-	uint32_t ulNotificationValue;
+
 
 	switch (pdrv) {
 	case DEV_RAM :
@@ -130,22 +130,23 @@ DRESULT disk_read (
 		// translate the arguments here
 
 		res = RES_ERROR;
-		xTaskToNotify = xTaskGetCurrentTaskHandle();
+
 		if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
 		(uint32_t) (sector),
 		count) == MSD_OK)
 		{
-			/* wait until the read operation is finished */
-			ulNotificationValue = ulTaskNotifyTake( pdTRUE,
-			SD_TIMEOUT);
-			if( ulNotificationValue == 1 )
+			if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
 			{
+				/* We were able to obtain the semaphore and can now access the
+				shared resource. */
+
 				while(BSP_SD_GetCardState()!= MSD_OK)
 				{
 					;
 				}
 				res = RES_OK;
 			}
+
 		}
 
 
@@ -185,7 +186,7 @@ DRESULT disk_write (
 {
 	DRESULT res;
 	int result;
-	uint32_t ulNotificationValue;
+
 
 	switch (pdrv) {
 	case DEV_RAM :
@@ -201,16 +202,16 @@ DRESULT disk_write (
 		// translate the arguments here
 
 		res = RES_ERROR;
-		xTaskToNotify = xTaskGetCurrentTaskHandle();
+
 		if(BSP_SD_WriteBlocks_DMA((uint32_t*)buff,
 		(uint32_t)(sector),
 		count) == MSD_OK)
 		{
-			/* wait until the read operation is finished */
-			ulNotificationValue = ulTaskNotifyTake( pdTRUE,
-			SD_TIMEOUT);
-			if( ulNotificationValue == 1 )
+			if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
 			{
+				/* We were able to obtain the semaphore and can now access the
+				shared resource. */
+
 				while(BSP_SD_GetCardState()!= MSD_OK)
 				{
 					;
@@ -330,13 +331,13 @@ void BSP_SD_WriteCpltCallback(void)
 
 	/* At this point xTaskToNotify should not be NULL as a transmission was
 	in progress. */
-	configASSERT( xTaskToNotify != NULL );
+	//configASSERT( xTaskToNotify != NULL );
 
 	/* Notify the task that the transmission is complete. */
-	vTaskNotifyGiveFromISR( xTaskToNotify, &xHigherPriorityTaskWoken );
+	xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
 
 	/* There are no transmissions in progress, so no tasks to notify. */
-	xTaskToNotify = NULL;
+	//xTaskToNotify = NULL;
 
 	/* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
 	should be performed to ensure the interrupt returns directly to the highest
@@ -355,13 +356,13 @@ void BSP_SD_ReadCpltCallback(void)
 
 	/* At this point xTaskToNotify should not be NULL as a transmission was
 	in progress. */
-	configASSERT( xTaskToNotify != NULL );
+	//configASSERT( xTaskToNotify != NULL );
 
 	/* Notify the task that the transmission is complete. */
-	vTaskNotifyGiveFromISR( xTaskToNotify, &xHigherPriorityTaskWoken );
-
+	//vTaskNotifyGiveFromISR( xTaskToNotify, &xHigherPriorityTaskWoken );
+	xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
 	/* There are no transmissions in progress, so no tasks to notify. */
-	xTaskToNotify = NULL;
+	//xTaskToNotify = NULL;
 
 	/* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
 	should be performed to ensure the interrupt returns directly to the highest

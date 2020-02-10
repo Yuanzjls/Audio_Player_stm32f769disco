@@ -13,7 +13,8 @@
 #include "GUI.h"
 #include <WM.h>
 #include <stm32f769i_discovery_ts.h>
-//#include "stm32f769i_discovery_lcd.h"
+//#include "MainTask.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -53,6 +54,9 @@ static JPEG_HandleTypeDef     JPEG_Handle;
 static JPEG_ConfTypeDef       JPEG_Info;
 extern __IO uint32_t Previous_FrameSize;
 
+
+#define MP3_HEADER_SIZE_POSITION  0x06
+
 static RCC_PeriphCLKInitTypeDef  PeriphClkInitStruct;
 #define VSYNC           1
 #define VBP             1
@@ -81,7 +85,8 @@ RTC_HandleTypeDef hrtc;
 UART_HandleTypeDef UartHandle;
 DMA_HandleTypeDef DMAUartHandle;
 FIL JPEG_File;  /* File object */
-extern __IO uint32_t uwTick;
+Wavheader Wheader;
+extern uint8_t volume;
 /* USER CODE BEGIN PV */
 /*GIF Decode Varible part*/
 
@@ -121,7 +126,7 @@ volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 12;
     ( void ) ulLine;
     ( void ) pcFileName;
 
-    taskENTER_CRITICAL();
+    //taskENTER_CRITICAL();
     {
         /* You can step out of this function to debug the assertion by using
         the debugger to set ulSetToNonZeroInDebuggerToContinue to a non-zero
@@ -130,7 +135,7 @@ volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 12;
         {
         }
     }
-    taskEXIT_CRITICAL();
+    //taskEXIT_CRITICAL();
 }
 
 
@@ -315,69 +320,82 @@ int fileReadBlockCallback(void * buffer, int numberOfBytes)
   * @retval int
   */
 uint32_t FrameOffset=0;
-const uint16_t block_size = 40960;
+const uint16_t block_size = 36864;
 uint16_t buff[block_size];
 #define PLAY_HEADER          0x2C
 bool flag = 0;
-Wavheader Wheader;
-static TaskHandle_t xTaskLed = NULL;
+uint8_t temp_data[100];
+TaskHandle_t xTaskVolume = NULL;
 static TaskHandle_t xTaskMusic = NULL;
 static TaskHandle_t xTaskGUI = NULL;
 static TaskHandle_t xTaskTouchEx = NULL;
-static void vTaskLed(void *pvParameters)
+static void vTaskVolume(void *pvParameters)
 {
+  UBaseType_t  priority;
+  uint32_t ulNotifiedValue;
   while(1)
   {
-    BSP_LED_Toggle(LED2);
-    vTaskDelay(400);
+
+	  ulNotifiedValue = xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 400 );
+
+	  {
+		  if (ulNotifiedValue & 0x01)
+		  priority = uxTaskPriorityGet( NULL );
+	              	vTaskPrioritySet(NULL, 0);
+	              	wm8994_SetVolume(AUDIO_I2C_ADDRESS, volume);
+	              	vTaskPrioritySet(NULL, priority);
+
+	  }
+	  BSP_LED_Toggle(LED2);
+    //vTaskDelay(400);
   }
 }
 static void vTaskTouchEx(void *pvParameters)
 {
-	uint32_t ulNotificationValue;
-	//GUI_PID_STATE TS_State = {0, 0, 0, 0};
+	volatile uint32_t ulNotificationValue;
 	TS_StateTypeDef  ts;
-  GUI_MTOUCH_EVENT gEvent;
-  GUI_MTOUCH_INPUT gInput[2];
+	static volatile GUI_PID_STATE TS_State = {0, 0, 0, 0};
 
-  gEvent.LayerIndex =0;
-  gEvent.NumPoints = 2;
-  gInput[0].Id = 0;
-  gInput[1].Id = 0;
+
+
 	while(1)
 	{
 		ulNotificationValue = ulTaskNotifyTake( pdTRUE, 50 );
-    gEvent.TimeStamp = xTaskGetTickCount();
+
 
 		if (ulNotificationValue==1)
 		{
-		  BSP_TS_GetState((TS_StateTypeDef *)&ts);
-      
-		  if (ts.touchDetected==1)
-		  {
-			  gInput[0].Flags = GUI_MTOUCH_FLAG_DOWN;
-        gInput[1].Flags = GUI_MTOUCH_FLAG_UP;
-		  }
-      else if (ts.touchDetected==2)
-      {
-        gInput[0].Flags = GUI_MTOUCH_FLAG_DOWN;
-        gInput[1].Flags = GUI_MTOUCH_FLAG_DOWN;
-      }
-      gInput[0].x = ts.touchX[0];
-			gInput[0].y = ts.touchY[0];
-      
-      gInput[1].x = ts.touchX[1];
-			gInput[1].y = ts.touchY[1];
-      
+			BSP_TS_GetState((TS_StateTypeDef *)&ts);
+			TS_State.Pressed = 1;
+			TS_State.x = ts.touchX[0];
+			TS_State.y = ts.touchY[0];
+			GUI_PID_StoreState((const GUI_PID_STATE*)&TS_State);
 		}
 		else
 		{
-      gInput[0].Flags = GUI_MTOUCH_FLAG_UP;
-      gInput[1].Flags = GUI_MTOUCH_FLAG_UP;			
+			if (TS_State.Pressed == 1)
+			{
+				TS_State.Pressed = 0;
+				TS_State.x = -1;
+				TS_State.y = -1;
+				GUI_PID_StoreState((const GUI_PID_STATE*)&TS_State);;
+			}
 		}
-    GUI_MTOUCH_StoreEvent(&gEvent, gInput);
+
 	}
 }
+unsigned int RetrieveMP3Data(void * pMP3CompressedData,
+unsigned int nMP3DataSizeInChars,
+void * token)
+{
+	UINT nData_Read;
+
+	f_read((FIL*)token, pMP3CompressedData, nMP3DataSizeInChars, &nData_Read);
+	return nData_Read;
+}
+
+
+
 static void vTaskMusic(void *pvParameters)
 {
   FRESULT fr;
@@ -386,6 +404,7 @@ static void vTaskMusic(void *pvParameters)
   FATFS fs;
   unsigned int length=0;
   uint32_t ulNotifiedValue;
+
   if (f_mount(&fs,(char*)"",1) == FR_OK)
   {
 	fr = f_findfirst(&dj, &fno, "", "*.wav");
@@ -399,7 +418,7 @@ static void vTaskMusic(void *pvParameters)
 		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
         while(1)
         {
-          xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 500);
+          xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 400 );
           if (ulNotifiedValue)
           {
             if (ulNotifiedValue  & 0x01)
@@ -419,8 +438,7 @@ static void vTaskMusic(void *pvParameters)
 					f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
 					f_lseek(&fi, PLAY_HEADER);
 					f_read(&fi, buff, block_size*2, &length);
-					Playback_Init(Wheader.Samplerate);
-					HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+					wm8994_SetFrequency(AUDIO_I2C_ADDRESS, Wheader.Samplerate);
             	}
             	else
             	{
@@ -438,21 +456,18 @@ static void vTaskMusic(void *pvParameters)
 //{
 //	BSP_LED_Toggle(LED3);
 //}
+
 void  vTaskGUI(void *pvParameters)
 {
-
-	while(1)
-	{
-		MainTask();
-	}
+	MainTask();
 }
 //higher number, higher priority
 static void AppTaskCreate(void)
 {
-  xTaskCreate(vTaskLed, "TaskLed", 512, NULL, 2, &xTaskLed);
-  xTaskCreate(vTaskMusic, "TaskMusic", 512, NULL, 3, &xTaskMusic);
-  xTaskCreate(vTaskGUI, "TaskGUI", 5120, NULL, 1, &xTaskGUI);
-  xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 4, &xTaskTouchEx);
+  xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
+  xTaskCreate(vTaskMusic, "TaskMusic", 1024, NULL, 4, &xTaskMusic);
+  xTaskCreate(vTaskGUI, "TaskGUI", 1024, NULL, 1, &xTaskGUI);
+  xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
 
   //xTimerStart(xTimerCreate("Timer", 600, pdTRUE, (void *) 0, vTimerLEDCallback), 0);
 }
@@ -572,12 +587,11 @@ int main(void)
 	    /* Peripheral interrupt init*/
 	    HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
 	    HAL_NVIC_EnableIRQ(USART1_IRQn);
-	   // UartHandle.hdmarx = &DMAUartHandle;
+
   /* USER CODE BEGIN 2 */
 	   // gif decode callback function set
 	    /* Initializes the SDRAM device */
 	    BSP_SDRAM_Init();
-    //BSP_LCD_SetBackColor(LCD_COLOR_BLACK);
     BSP_SD_Init();    
     BSP_LED_Init(LED1);
     BSP_LED_Init(LED2);
@@ -588,9 +602,11 @@ int main(void)
   	WM_MULTIBUF_Enable(1);
 
 	/* Activate the use of memory device feature */
-	  WM_SetCreateFlags(WM_CF_MEMDEV);
-    GUI_MTOUCH_Enable(1);
+	WM_SetCreateFlags(WM_CF_MEMDEV);
+
+    //GUI_MTOUCH_Enable(1);
     AppTaskCreate();
+    HAL_Delay(3000);
     vTaskStartScheduler();
 
     while(1);
