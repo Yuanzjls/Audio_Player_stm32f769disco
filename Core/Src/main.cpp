@@ -13,6 +13,7 @@
 #include "GUI.h"
 #include <WM.h>
 #include <stm32f769i_discovery_ts.h>
+#include <MainTask.h>
 //#include "MainTask.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -326,7 +327,7 @@ uint16_t buff[block_size];
 bool flag = 0;
 uint8_t temp_data[100];
 TaskHandle_t xTaskVolume = NULL;
-static TaskHandle_t xTaskMusic = NULL;
+TaskHandle_t xTaskMusic = NULL;
 static TaskHandle_t xTaskGUI = NULL;
 static TaskHandle_t xTaskTouchEx = NULL;
 static void vTaskVolume(void *pvParameters)
@@ -394,8 +395,8 @@ void * token)
 	return nData_Read;
 }
 
-
-
+AudioTime Total_AudioTime;
+extern char time_char[18];
 static void vTaskMusic(void *pvParameters)
 {
   FRESULT fr;
@@ -404,6 +405,9 @@ static void vTaskMusic(void *pvParameters)
   FATFS fs;
   unsigned int length=0;
   uint32_t ulNotifiedValue;
+  WM_HWIN hWin, hItem;
+  WM_MESSAGE p;
+
 
   if (f_mount(&fs,(char*)"",1) == FR_OK)
   {
@@ -414,8 +418,20 @@ static void vTaskMusic(void *pvParameters)
 		f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
 		f_lseek(&fi, PLAY_HEADER);
 		f_read(&fi, buff, block_size*2, &length);
+
+		Total_AudioTime.total_second = (f_size(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
+		Total_AudioTime.second = Total_AudioTime.total_second % 60;
+		Total_AudioTime.minute = Total_AudioTime.total_second / 60;
+		Total_AudioTime.current_progress_insecond = 0;
+		Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
+		Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
 		Playback_Init(Wheader.Samplerate);
 		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+		hWin = WM_GetActiveWindow();
+
+		sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
+				Total_AudioTime.minute, Total_AudioTime.second);
+
         while(1)
         {
           xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 400 );
@@ -429,6 +445,22 @@ static void vTaskMusic(void *pvParameters)
             {
               f_read(&fi, &buff[0], block_size, &length);
             }
+            if (ulNotifiedValue & 0x04)
+            {
+            	f_lseek(&fi, PLAY_HEADER +
+            			Total_AudioTime.current_progress_insecond * 4
+						* Wheader.Samplerate);
+            	f_read(&fi, buff, block_size*2, &length);
+            	Total_AudioTime.current_progress_insecond = (f_tell(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
+            }
+            if (ulNotifiedValue  & 0x07)
+            {
+            	Total_AudioTime.current_progress_insecond = (f_tell(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
+				Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
+				Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
+            	sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
+            							Total_AudioTime.minute, Total_AudioTime.second);
+            }
             if (f_tell(&fi) == f_size(&fi))
             {
             	fr = f_findnext(&dj, &fno);
@@ -438,6 +470,14 @@ static void vTaskMusic(void *pvParameters)
 					f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
 					f_lseek(&fi, PLAY_HEADER);
 					f_read(&fi, buff, block_size*2, &length);
+
+					Total_AudioTime.total_second = (f_size(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
+					Total_AudioTime.second = Total_AudioTime.total_second % 60;
+					Total_AudioTime.minute = Total_AudioTime.total_second / 60;
+					Total_AudioTime.current_progress_insecond = 0;
+					Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
+					Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
+
 					wm8994_SetFrequency(AUDIO_I2C_ADDRESS, Wheader.Samplerate);
             	}
             	else

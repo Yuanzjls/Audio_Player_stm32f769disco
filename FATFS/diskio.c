@@ -60,7 +60,7 @@ DSTATUS disk_status (
 }
 
 
-SemaphoreHandle_t xSemaphore;
+static SemaphoreHandle_t xSemaphore;
 /*-----------------------------------------------------------------------*/
 /* Inidialize a Drive                                                    */
 /*-----------------------------------------------------------------------*/

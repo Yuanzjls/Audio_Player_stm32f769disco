@@ -19,6 +19,10 @@
 */
 
 // USER START (Optionally insert additional includes)
+#include "stm32f769i_discovery.h"
+#include "stdio.h"
+#include "FreeRTOS.h"
+#include "task.h"
 // USER END
 
 #include "DIALOG.h"
@@ -29,14 +33,11 @@
 *
 **********************************************************************
 */
-#define ID_FRAMEWIN_0            (GUI_ID_USER + 0x00)
-#define ID_BUTTON_0            (GUI_ID_USER + 0x01)
-#define ID_SLIDER_0            (GUI_ID_USER + 0x02)
-#define ID_TEXT_0            (GUI_ID_USER + 0x03)
-#define ID_TEXT_1            (GUI_ID_USER + 0x04)
-#define ID_TEXT_2            (GUI_ID_USER + 0x05)
-#define ID_TEXT_3            (GUI_ID_USER + 0x06)
-#define ID_SLIDER_1            (GUI_ID_USER + 0x07)
+#define ID_WINDOW_0 (GUI_ID_USER + 0x00)
+#define ID_BUTTON_0 (GUI_ID_USER + 0x01)
+#define ID_SLIDER_0 (GUI_ID_USER + 0x02)
+#define ID_TEXT_0 (GUI_ID_USER + 0x03)
+#define ID_TEXT_1 (GUI_ID_USER + 0x04)
 
 
 // USER START (Optionally insert additional defines)
@@ -57,14 +58,11 @@
 *       _aDialogCreate
 */
 static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
-  { FRAMEWIN_CreateIndirect, "Framewin", ID_FRAMEWIN_0, 0, 0, 800, 480, 0, 0x0, 0 },
-  { BUTTON_CreateIndirect, "PLAY", ID_BUTTON_0, 365, 333, 70, 70, 0, 0x0, 0 },
-  { SLIDER_CreateIndirect, "Slider", ID_SLIDER_0, 251, 129, 420, 20, 0, 0x0, 0 },
-  { TEXT_CreateIndirect, "Audio Player", ID_TEXT_0, 312, 34, 156, 39, 0, 0x0, 0 },
-  { TEXT_CreateIndirect, "Volume", ID_TEXT_1, 142, 131, 80, 20, 0, 0x0, 0 },
-  { TEXT_CreateIndirect, "Text", ID_TEXT_2, 384, 89, 80, 20, 0, 0x64, 0 },
-  { TEXT_CreateIndirect, "Text", ID_TEXT_3, 91, 208, 127, 20, 0, 0x64, 0 },
-  { SLIDER_CreateIndirect, "Slider", ID_SLIDER_1, 248, 190, 425, 47, 0, 0x0, 0 },
+  { WINDOW_CreateIndirect, "Window", ID_WINDOW_0, 0, 0, 800, 480, 0, 0x0, 0 },
+  { BUTTON_CreateIndirect, "Play", ID_BUTTON_0, 363, 350, 75, 75, 0, 0x0, 0 },
+  { SLIDER_CreateIndirect, "Slider", ID_SLIDER_0, 128, 154, 569, 37, 0, 0x0, 0 },
+  { TEXT_CreateIndirect, "title", ID_TEXT_0, 323, 21, 167, 38, 0, 0x64, 0 },
+  { TEXT_CreateIndirect, "Time", ID_TEXT_1, 359, 205, 83, 30, 0, 0x64, 0 },
   // USER START (Optionally insert additional widgets)
   // USER END
 };
@@ -93,42 +91,30 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
   switch (pMsg->MsgId) {
   case WM_INIT_DIALOG:
     //
-    // Initialization of 'Framewin'
+    // Initialization of 'Window'
     //
     hItem = pMsg->hWin;
-    FRAMEWIN_SetTitleVis(hItem, 0);
-    FRAMEWIN_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
+    WINDOW_SetBkColor(hItem, GUI_MAKE_COLOR(0x00E7A3A9));
     //
-    // Initialization of 'PLAY'
+    // Initialization of 'Play'
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
     BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
     //
-    // Initialization of 'Audio Player'
+    // Initialization of 'title'
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_0);
-    TEXT_SetFont(hItem, GUI_FONT_32_ASCII);
     TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
+    TEXT_SetTextColor(hItem, GUI_MAKE_COLOR(0x00000000));
+    TEXT_SetFont(hItem, GUI_FONT_32_ASCII);
+    TEXT_SetText(hItem, "Audio Player");
     //
-    // Initialization of 'Volume'
+    // Initialization of 'Time'
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_1);
-    TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
-    TEXT_SetFont(hItem, GUI_FONT_24_ASCII);
-    //
-    // Initialization of 'Text'
-    //
-    hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_2);
-    TEXT_SetText(hItem, "Text");
     TEXT_SetFont(hItem, GUI_FONT_24_ASCII);
     TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
-    //
-    // Initialization of 'Text'
-    //
-    hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_3);
-    TEXT_SetFont(hItem, GUI_FONT_24_ASCII);
-    TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
-    TEXT_SetText(hItem, "00:00 / 3:00");
+    TEXT_SetText(hItem, "Time");
     // USER START (Optionally insert additional code for further widget initialization)
     // USER END
     break;
@@ -136,7 +122,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     Id    = WM_GetId(pMsg->hWinSrc);
     NCode = pMsg->Data.v;
     switch(Id) {
-    case ID_BUTTON_0: // Notifications sent by 'PLAY'
+    case ID_BUTTON_0: // Notifications sent by 'Play'
       switch(NCode) {
       case WM_NOTIFICATION_CLICKED:
         // USER START (Optionally insert code for reacting on notification message)
@@ -151,24 +137,6 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
       }
       break;
     case ID_SLIDER_0: // Notifications sent by 'Slider'
-      switch(NCode) {
-      case WM_NOTIFICATION_CLICKED:
-        // USER START (Optionally insert code for reacting on notification message)
-        // USER END
-        break;
-      case WM_NOTIFICATION_RELEASED:
-        // USER START (Optionally insert code for reacting on notification message)
-        // USER END
-        break;
-      case WM_NOTIFICATION_VALUE_CHANGED:
-        // USER START (Optionally insert code for reacting on notification message)
-        // USER END
-        break;
-      // USER START (Optionally insert additional code for further notification handling)
-      // USER END
-      }
-      break;
-    case ID_SLIDER_1: // Notifications sent by 'Slider'
       switch(NCode) {
       case WM_NOTIFICATION_CLICKED:
         // USER START (Optionally insert code for reacting on notification message)
@@ -206,10 +174,10 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 */
 /*********************************************************************
 *
-*       CreateFramewin
+*       CreateWindow
 */
-WM_HWIN CreateFramewin(void);
-WM_HWIN CreateFramewin(void) {
+WM_HWIN CreateWindow(void);
+WM_HWIN CreateWindow(void) {
   WM_HWIN hWin;
 
   hWin = GUI_CreateDialogBox(_aDialogCreate, GUI_COUNTOF(_aDialogCreate), _cbDialog, WM_HBKWIN, 0, 0);
@@ -217,31 +185,6 @@ WM_HWIN CreateFramewin(void) {
 }
 
 // USER START (Optionally insert additional public code)
-void MainTask(void)
-{
-
-	WM_HWIN hWin;
-
-	GUI_Init();
-
-	GUI_Clear();
-
-	WM_MULTIBUF_Enable(1);
-
-
-	//GUI_CURSOR_Show();
-
-
-	hWin = CreateFramewin();
-	GUI_Delay(50);
-	GUI_Exec();
-	WM_PaintWindowAndDescs(hWin);
-	while(1)
-	{
-		GUI_Delay(50);
-		GUI_Exec();
-	}
-}
 // USER END
 
 /*************************** End of file ****************************/
