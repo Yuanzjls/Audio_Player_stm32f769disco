@@ -36,7 +36,7 @@
 ************************************************************************
 */
 
-
+#define WM_USER_UPDATEFILENAME (WM_USER + 0)
 
 typedef struct
 {

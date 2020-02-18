@@ -57,11 +57,12 @@
 
 // USER START (Optionally insert additional static data)
 uint8_t volume = Initial_volume;
-static char volume_number[4];
+static char volume_number[12];
 char time_char[15];
 extern TaskHandle_t xTaskVolume;
 extern TaskHandle_t xTaskMusic;
 extern AudioTime Total_AudioTime;
+
 // USER END
 
 /*********************************************************************
@@ -72,9 +73,9 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   { WINDOW_CreateIndirect, "Window", ID_WINDOW_0, 0, 0, 800, 480, 0, 0x0, 0 },
   { BUTTON_CreateIndirect, "PLAY", ID_BUTTON_0, 365, 333, 70, 70, 0, 0x0, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_0, 251, 129, 420, 40, 0, 0x0, 0 },
-  { TEXT_CreateIndirect, "Audio Player", ID_TEXT_0, 312, 34, 156, 39, 0, 0x0, 0 },
-  { TEXT_CreateIndirect, "Volume", ID_TEXT_1, 142, 131, 80, 20, 0, 0x0, 0 },
-  { TEXT_CreateIndirect, "Text", ID_TEXT_2, 384, 89, 80, 20, 0, 0x64, 0 },
+  { TEXT_CreateIndirect, "Audio Player", ID_TEXT_0, 312, 20, 156, 39, 0, 0x0, 0 },
+  { TEXT_CreateIndirect, "Volume", ID_TEXT_1, 105, 133, 115, 20, 0, 0x0, 0 },
+  { TEXT_CreateIndirect, "Filename", ID_TEXT_2, 0, 70, 799, 32, 0, 0x64, 0 },
   { TEXT_CreateIndirect, "Text", ID_TEXT_3, 91, 208, 127, 20, 0, 0x64, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_1, 248, 190, 425, 47, 0, 0x0, 0 },
   // USER START (Optionally insert additional widgets)
@@ -100,6 +101,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
   int     NCode;
   int     Id;
   // USER START (Optionally insert additional variables)
+  static  WM_HTIMER hTimerProcess;
   // USER END
 
   switch (pMsg->MsgId) {
@@ -109,7 +111,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     //
 
 
-	sprintf(volume_number, "%d", volume);
+	sprintf(volume_number, "Volume:%3d", volume);
 	strcpy(time_char, "00:00 / 03:00");
 
     hItem = pMsg->hWin;
@@ -135,8 +137,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     // Initialization of 'Text'
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_2);
-    TEXT_SetText(hItem, volume_number);
-    TEXT_SetFont(hItem, GUI_FONT_24_ASCII);
+    TEXT_SetFont(hItem, GUI_FONT_32_ASCII);
     TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
     // USER START (Optionally insert additional code for further widget initialization)
 
@@ -154,8 +155,11 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
 	SLIDER_SetRange(hItem, 0, 100);
 	SLIDER_SetValue(hItem, 0);
+
+	hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
     // USER END
     break;
+
   case WM_NOTIFY_PARENT:
     Id    = WM_GetId(pMsg->hWinSrc);
     NCode = pMsg->Data.v;
@@ -190,8 +194,8 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
         // USER START (Optionally insert code for reacting on notification message)
     	  hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_0);
     	  volume = SLIDER_GetValue(hItem);
-    	  hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_2);
-    	  sprintf(volume_number, "%d", volume);
+    	  hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_1);
+    	  sprintf(&volume_number[7], "%3d", volume);
     	  TEXT_SetText(hItem, volume_number);
     	  //wm8994_SetVolume(AUDIO_I2C_ADDRESS, volume);
     	  xTaskNotify( xTaskVolume, 0x01, eSetBits );
@@ -206,12 +210,15 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
         switch(NCode) {
         case WM_NOTIFICATION_CLICKED:
           // USER START (Optionally insert code for reacting on notification message)
+        	WM_DeleteTimer(hTimerProcess);
           // USER END
           break;
         case WM_NOTIFICATION_RELEASED:
         	hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
 		  Total_AudioTime.current_progress_insecond = SLIDER_GetValue(hItem)*Total_AudioTime.total_second/100;
+		  hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
 		  xTaskNotify(xTaskMusic, 0x04, eSetBits);
+
           break;
         case WM_NOTIFICATION_VALUE_CHANGED:
           // USER START (Optionally insert code for reacting on notification message)
@@ -231,7 +238,12 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 		TEXT_SetText(hItem, time_char);
 		hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
 		SLIDER_SetValue(hItem, 100 * Total_AudioTime.current_progress_insecond/ Total_AudioTime.total_second);
-		WM_RestartTimer(pMsg->Data.v, 1000);
+		WM_RestartTimer(pMsg->Data.v, 100);
+		break;
+	case WM_USER_UPDATEFILENAME:
+		hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_2);
+		TEXT_SetText(hItem, pMsg->Data.p);
+		break;
   // USER END
   default:
     WM_DefaultProc(pMsg);
@@ -256,25 +268,24 @@ WM_HWIN CreateFramewin(void) {
   hWin = GUI_CreateDialogBox(_aDialogCreate, GUI_COUNTOF(_aDialogCreate), _cbDialog, WM_HBKWIN, 0, 0);
   return hWin;
 }
-
+WM_HWIN xhWin;
 // USER START (Optionally insert additional public code)
 void MainTask(void)
 {
 
-	WM_HWIN hWin;
 
-	GUI_Init();
+
 
 	GUI_Clear();
 
 	WM_MULTIBUF_Enable(1);
-	hWin = CreateFramewin();
-	WM_PaintWindowAndDescs(hWin);
-	WM_CreateTimer(hWin, 0, 1000, 0);
+	xhWin = CreateFramewin();
+	WM_PaintWindowAndDescs(xhWin);
+
 	while(1)
 	{
 		GUI_Delay(50);
-		//GUI_Exec();
+
 	}
 }
 // USER END

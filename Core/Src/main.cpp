@@ -397,6 +397,7 @@ void * token)
 
 AudioTime Total_AudioTime;
 extern char time_char[18];
+WM_HWIN xhWin;
 static void vTaskMusic(void *pvParameters)
 {
   FRESULT fr;
@@ -405,7 +406,7 @@ static void vTaskMusic(void *pvParameters)
   FATFS fs;
   unsigned int length=0;
   uint32_t ulNotifiedValue;
-  WM_HWIN hWin, hItem;
+
   WM_MESSAGE p;
 
 
@@ -427,11 +428,13 @@ static void vTaskMusic(void *pvParameters)
 		Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
 		Playback_Init(Wheader.Samplerate);
 		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
-		hWin = WM_GetActiveWindow();
+		p.MsgId = WM_USER_UPDATEFILENAME;
+		p.Data.p = fno.fname;
+		p.hWin = xhWin;
 
 		sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
 				Total_AudioTime.minute, Total_AudioTime.second);
-
+		WM_SendMessage(xhWin, &p);
         while(1)
         {
           xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 400 );
@@ -478,6 +481,7 @@ static void vTaskMusic(void *pvParameters)
 					Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
 					Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
 
+					WM_SendMessage(xhWin, &p);
 					wm8994_SetFrequency(AUDIO_I2C_ADDRESS, Wheader.Samplerate);
             	}
             	else
@@ -546,8 +550,6 @@ int main(void)
 
 	
 	uint32_t AlphaInvertConfig;
-
-
 
 
 	MPU_Config();
@@ -632,13 +634,13 @@ int main(void)
 	   // gif decode callback function set
 	    /* Initializes the SDRAM device */
 	    BSP_SDRAM_Init();
-    BSP_SD_Init();    
-    BSP_LED_Init(LED1);
-    BSP_LED_Init(LED2);
-    BSP_LED_Init(LED3);
-    BSP_TS_Init (800, 480);
-    BSP_TS_ITConfig();
-    GUI_Init();
+		BSP_SD_Init();
+		BSP_LED_Init(LED1);
+		BSP_LED_Init(LED2);
+		BSP_LED_Init(LED3);
+		BSP_TS_Init (800, 480);
+		BSP_TS_ITConfig();
+		GUI_Init();
   	WM_MULTIBUF_Enable(1);
 
 	/* Activate the use of memory device feature */

@@ -8,7 +8,7 @@
 #include "DIALOG.h"
 /*
 *********************************************************************************************************
-* ºê¶¨Òå
+* å®å®šä¹‰
 *********************************************************************************************************
 */
 #define ID_FRAMEWIN_0 (GUI_ID_USER + 0x00)
@@ -18,7 +18,7 @@
 
 /*
 *********************************************************************************************************
-* GUI_WIDGET_CREATE_INFO ÀàĞÍÊı×é
+* GUI_WIDGET_CREATE_INFO ç±»å‹æ•°ç»„
 *********************************************************************************************************
 */
 static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
@@ -29,10 +29,10 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
 };
 /*
 *********************************************************************************************************
-* º¯ Êı Ãû: _cbDialog
-* ¹¦ÄÜËµÃ÷: ¶Ô»°¿ò»Øµ÷º¯Êı
-* ĞÎ ²Î: pMsg »Øµ÷²ÎÊı
-* ·µ »Ø Öµ: ÎŞ
+* å‡½ æ•° å: _cbDialog
+* åŠŸèƒ½è¯´æ˜: å¯¹è¯æ¡†å›è°ƒå‡½æ•°
+* å½¢ å‚: pMsg å›è°ƒå‚æ•°
+* è¿” å› å€¼: æ— 
 *********************************************************************************************************
 */
 static void _cbDialog(WM_MESSAGE * pMsg)
@@ -40,28 +40,28 @@ static void _cbDialog(WM_MESSAGE * pMsg)
 WM_HWIN hItem;
 int NCode;
 int Id;
-switch (pMsg->MsgId) //--------------£¨1£©
+switch (pMsg->MsgId) //--------------ï¼ˆ1ï¼‰
 {
-case WM_INIT_DIALOG: //--------------£¨2£©
+case WM_INIT_DIALOG: //--------------ï¼ˆ2ï¼‰
 //
-// ³õÊ¼»¯ 'Framewin'
+// åˆå§‹åŒ– 'Framewin'
 //
 hItem = pMsg->hWin;
 FRAMEWIN_SetFont(hItem, GUI_FONT_32B_ASCII);
 FRAMEWIN_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
 FRAMEWIN_SetText(hItem, "armfly");
 //
-// ³õÊ¼»¯ 'Button'
+// åˆå§‹åŒ– 'Button'
 //
 hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
 BUTTON_SetFont(hItem, GUI_FONT_24B_ASCII);
 BUTTON_SetText(hItem, "armfly");
 break;
-case WM_PAINT: //--------------£¨3£©
+case WM_PAINT: //--------------ï¼ˆ3ï¼‰
 GUI_SetBkColor(GUI_BLUE);
 GUI_Clear();
 break;
-case WM_KEY: //--------------£¨4£©
+case WM_KEY: //--------------ï¼ˆ4ï¼‰
 switch (((WM_KEY_INFO*)(pMsg->Data.p))->Key)
 {
 case GUI_KEY_ESCAPE:
@@ -72,7 +72,7 @@ case GUI_KEY_ESCAPE:
 	break;
 	}
 	break;
-	case WM_NOTIFY_PARENT: //--------------£¨ 5£©
+	case WM_NOTIFY_PARENT: //--------------ï¼ˆ 5ï¼‰
 	Id = WM_GetId(pMsg->hWinSrc);
 	NCode = pMsg->Data.v;
 	switch(Id)
@@ -117,10 +117,10 @@ case GUI_KEY_ESCAPE:
 }
 /*
 *********************************************************************************************************
-* º¯ Êı Ãû: CreateFramewin
-* ¹¦ÄÜËµÃ÷: ´´½¨¶Ô»°¿ò
-* ĞÎ ²Î: ÎŞ
-* ·µ »Ø Öµ: ·µ»Ø¶Ô»°¿ò¾ä±ú
+* å‡½ æ•° å: CreateFramewin
+* åŠŸèƒ½è¯´æ˜: åˆ›å»ºå¯¹è¯æ¡†
+* å½¢ å‚: æ— 
+* è¿” å› å€¼: è¿”å›å¯¹è¯æ¡†å¥æŸ„
 *********************************************************************************************************
 */
 WM_HWIN CreateFramewin(void)
@@ -131,19 +131,19 @@ return hWin;
 }
 /*
 *********************************************************************************************************
-* º¯ Êı Ãû: MainTask
-* ¹¦ÄÜËµÃ÷: GUI Ö÷º¯Êı
-* ĞÎ ²Î: ÎŞ
-* ·µ »Ø Öµ: ÎŞ
+* å‡½ æ•° å: MainTask
+* åŠŸèƒ½è¯´æ˜: GUI ä¸»å‡½æ•°
+* å½¢ å‚: æ— 
+* è¿” å› å€¼: æ— 
 *********************************************************************************************************
 */
 void MainTask(void)
 {
 	WM_HWIN hWin;
-/* ³õÊ¼ emWin */
+/* åˆå§‹ emWin */
 	GUI_Init();
 
-	/* ´´½¨¶Ô»°¿ò */
+	/* åˆ›å»ºå¯¹è¯æ¡† */
 	hWin = CreateFramewin();
 	WM_PaintWindowAndDescs(hWin);
 	while(1)
