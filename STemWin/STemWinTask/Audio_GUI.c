@@ -25,6 +25,8 @@
 #include "task.h"
 #include "string.h"
 #include "ff.h"
+#include "ST_GUI_Addons.h"
+
 // USER END
 
 #include "DIALOG.h"
@@ -67,6 +69,23 @@ extern TaskHandle_t xTaskMusic;
 extern AudioTime Total_AudioTime;
 uint8_t Play_Status=1;
 static FIL fi_xbf;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward_pressed;
+
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward;
+
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward_des;
 // USER END
 
 /*********************************************************************
@@ -75,7 +94,7 @@ static FIL fi_xbf;
 */
 static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   { WINDOW_CreateIndirect, "Window", ID_WINDOW_0, 0, 0, 800, 480, 0, 0x0, 0 },
-  { BUTTON_CreateIndirect, "PAUSE", ID_BUTTON_0, 365, 340, 80, 70, 0, 0x0, 0 },
+  { BUTTON_CreateIndirect, "", ID_BUTTON_0, 365, 340, 60, 60, 0, 0x0, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_0, 251, 129, 420, 40, 0, 0x0, 0 },
   { TEXT_CreateIndirect, "Audio Player", ID_TEXT_0, 312, 20, 156, 39, 0, 0x0, 0 },
   { TEXT_CreateIndirect, "Volume", ID_TEXT_1, 105, 133, 115, 20, 0, 0x0, 0 },
@@ -150,7 +169,9 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
     BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
-    BUTTON_SetText(hItem, "PAUSE");
+    BUTTON_SetBitmap(hItem, 0, &audio_bmpause_des);
+    BUTTON_SetBitmap(hItem, 1, &audio_bmpause_pressed);
+    //BUTTON_SetText(hItem, "PAUSE");
     //
     // Initialization of 'Audio Player'
     //
@@ -175,8 +196,12 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     // USER START (Optionally insert additional code for further widget initialization)
 
     hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_0);
+    SLIDER_SetFocusColor(hItem, GUI_STCOLOR_LIGHTBLUE);
+	SLIDER_SetBkColor (hItem, GUI_WHITE);
+	SLIDER_SetWidth(hItem, 0);
     SLIDER_SetRange(hItem, 0, 100);
     SLIDER_SetValue(hItem, volume);
+    SLIDER_SetSTSkin(hItem);
     //
     // Initialization of 'Text'
     //
@@ -186,8 +211,12 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     TEXT_SetText(hItem, time_char);
 
     hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
+    SLIDER_SetFocusColor(hItem, GUI_STCOLOR_LIGHTBLUE);
+	SLIDER_SetBkColor (hItem, GUI_WHITE);
+	SLIDER_SetWidth(hItem, 0);
 	SLIDER_SetRange(hItem, 0, Total_AudioTime.total_second);
 	SLIDER_SetValue(hItem, 0);
+	SLIDER_SetSTSkin(hItem);
 
 	//
 	    // Initialization of 'Button'
@@ -215,12 +244,14 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 			 if (Play_Status == 0)
 			 {
 				 Play_Status = 1;
-				 BUTTON_SetText(hItem, "PAUSE");
+				 BUTTON_SetBitmap(hItem, 0, &audio_bmpause_des);
+				 BUTTON_SetBitmap(hItem, 1, &audio_bmpause_pressed);
 			 }
 			 else
 			 {
 				 Play_Status = 0;
-				 BUTTON_SetText(hItem, "PLAY");
+				 BUTTON_SetBitmap(hItem, 0, &audio_bmplay_des);
+				 BUTTON_SetBitmap(hItem, 1, &audio_bmplay_pressed);
 			 }
 			 xTaskNotify(xTaskMusic, 0x08, eSetBits);
 		 }
