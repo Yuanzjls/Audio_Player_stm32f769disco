@@ -24,11 +24,14 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "string.h"
+#include "ff.h"
 // USER END
 
 #include "DIALOG.h"
 #include <stm32f769i_discovery_audio.h>
 #include "MainTask.h"
+GUI_XBF_DATA XBF_Data;
+GUI_FONT     Font;
 /*********************************************************************
 *
 *       Defines
@@ -62,7 +65,8 @@ char time_char[15];
 extern TaskHandle_t xTaskVolume;
 extern TaskHandle_t xTaskMusic;
 extern AudioTime Total_AudioTime;
-
+uint8_t Play_Status=0;
+static FIL fi_xbf;
 // USER END
 
 /*********************************************************************
@@ -71,7 +75,7 @@ extern AudioTime Total_AudioTime;
 */
 static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   { WINDOW_CreateIndirect, "Window", ID_WINDOW_0, 0, 0, 800, 480, 0, 0x0, 0 },
-  { BUTTON_CreateIndirect, "PLAY", ID_BUTTON_0, 365, 333, 70, 70, 0, 0x0, 0 },
+  { BUTTON_CreateIndirect, "PAUSE", ID_BUTTON_0, 365, 340, 80, 70, 0, 0x0, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_0, 251, 129, 420, 40, 0, 0x0, 0 },
   { TEXT_CreateIndirect, "Audio Player", ID_TEXT_0, 312, 20, 156, 39, 0, 0x0, 0 },
   { TEXT_CreateIndirect, "Volume", ID_TEXT_1, 105, 133, 115, 20, 0, 0x0, 0 },
@@ -82,6 +86,30 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   // USER END
 };
 
+
+
+static int _cbGetData(U32 Off, U16 NumBytes, void * pVoid, void * pBuffer) {
+  //FIL hFile;
+  DWORD  NumBytesRead;
+
+  //hFile = *(FIL *)pVoid;
+  //
+  // Set file pointer to the requested position
+  //
+  if (f_lseek(&fi_xbf, Off) != FR_OK) {
+    return 1; // Error
+  }
+  //
+  // Read font data
+  //
+  if (f_read(&fi_xbf, pBuffer, NumBytes, &NumBytesRead) != FR_OK) {
+    return 1; // Error
+  }
+  if (NumBytesRead != NumBytes) {
+    return 1; // Error
+  }
+  return 0;   // Ok
+}
 /*********************************************************************
 *
 *       Static code
@@ -121,6 +149,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
     BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
+    BUTTON_SetText(hItem, "PAUSE");
     //
     // Initialization of 'Audio Player'
     //
@@ -136,9 +165,12 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     //
     // Initialization of 'Text'
     //
+
+
     hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_2);
-    TEXT_SetFont(hItem, GUI_FONT_32_ASCII);
+    TEXT_SetFont(hItem, &Font);
     TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
+
     // USER START (Optionally insert additional code for further widget initialization)
 
     hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_0);
@@ -168,13 +200,36 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
       switch(NCode) {
       case WM_NOTIFICATION_CLICKED:
         // USER START (Optionally insert code for reacting on notification message)
-    	//BSP_LED_Toggle(LED3);
+    	  hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
+    	  //BUTTON_SetPressed(hItem, 0);
+		 if (BUTTON_IsPressed(hItem) == 1)
+		 {
+			 if (Play_Status == 0)
+			 {
+				 Play_Status = 1;
+				 BUTTON_SetText(hItem, "PAUSE");
+			 }
+			 else
+			 {
+				 Play_Status = 0;
+				 BUTTON_SetText(hItem, "PLAY");
+			 }
+			 xTaskNotify(xTaskMusic, 0x08, eSetBits);
+		 }
+
         // USER END
         break;
       case WM_NOTIFICATION_RELEASED:
         // USER START (Optionally insert code for reacting on notification message)
+
+
+
         // USER END
         break;
+
+      case WM_NOTIFICATION_MOVED_OUT:
+
+    	  break;
       // USER START (Optionally insert additional code for further notification handling)
       // USER END
       }
@@ -270,18 +325,30 @@ WM_HWIN CreateFramewin(void) {
 }
 WM_HWIN xhWin;
 // USER START (Optionally insert additional public code)
-void MainTask(void)
+
+void YaHeiFont_Init(void)
+{
+	f_open(&fi_xbf, "YaHei.xbf", FA_READ);
+	GUI_XBF_CreateFont(&Font,              // Pointer to GUI_FONT structure in RAM
+						 &XBF_Data,          // Pointer to GUI_XBF_DATA structure in RAM
+						 GUI_XBF_TYPE_PROP,  // Font type to be created
+						 _cbGetData,         // Pointer to callback function
+						 (void *)&fi_xbf);    // Pointer to be passed to GetData function
+}
+__weak void MainTask(void)
 {
 
-
+	uint16_t fr, re_font;
 
 
 	GUI_Clear();
 
-	WM_MULTIBUF_Enable(1);
-	xhWin = CreateFramewin();
-	WM_PaintWindowAndDescs(xhWin);
+	YaHeiFont_Init();
 
+	xhWin = CreateFramewin();
+
+	GUI_UC_SetEncodeUTF8();
+	xTaskNotify(xTaskMusic, 0x08, eSetBits);
 	while(1)
 	{
 		GUI_Delay(50);

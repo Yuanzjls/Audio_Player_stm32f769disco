@@ -177,7 +177,7 @@ Attention : Do not modify this file ! If you do, you will not
 #define GUI_ALLOC_DATATYPE_U U32
 
 #ifndef   GUI_MAX_XBF_BYTES
-  #define GUI_MAX_XBF_BYTES 200
+  #define GUI_MAX_XBF_BYTES 500
 #endif
 
 #ifndef   GUI_MEMSET

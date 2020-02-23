@@ -100,6 +100,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
     BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
+    BUTTON_SetText(hItem, "PAUSE");
     //
     // Initialization of 'title'
     //

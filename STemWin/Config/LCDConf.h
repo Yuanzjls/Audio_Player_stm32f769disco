@@ -45,7 +45,7 @@
   
 #include "main.h"
 #include "GUI.h"
-
+#include "GUIDRV_Lin.h"
 #ifndef LCDCONF_H
 #define LCDCONF_H
 

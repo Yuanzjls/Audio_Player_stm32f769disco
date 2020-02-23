@@ -136,7 +136,7 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
-
+uint16_t GBK2UTF16(const char * str);
 #ifdef __cplusplus
 }
 #endif

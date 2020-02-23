@@ -47,7 +47,7 @@ typedef struct
 	uint32_t current_progress_insecond;
 	uint32_t total_second;
 }AudioTime;
-
+void YaHeiFont_Init(void);
 #endif
 
 /*****************************(END OF FILE) *********************************/

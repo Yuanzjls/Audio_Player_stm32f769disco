@@ -14,6 +14,7 @@
 #include <WM.h>
 #include <stm32f769i_discovery_ts.h>
 #include <MainTask.h>
+
 //#include "MainTask.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -338,27 +339,26 @@ static void vTaskVolume(void *pvParameters)
   {
 
 	  ulNotifiedValue = xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 400 );
-
+	  if (ulNotifiedValue & 0x01)
 	  {
-		  if (ulNotifiedValue & 0x01)
-		  priority = uxTaskPriorityGet( NULL );
-	              	vTaskPrioritySet(NULL, 0);
-	              	wm8994_SetVolume(AUDIO_I2C_ADDRESS, volume);
-	              	vTaskPrioritySet(NULL, priority);
+
+			priority = uxTaskPriorityGet( NULL );
+			vTaskPrioritySet(NULL, 0);
+			wm8994_SetVolume(AUDIO_I2C_ADDRESS, volume);
+			vTaskPrioritySet(NULL, priority);
 
 	  }
 	  BSP_LED_Toggle(LED2);
     //vTaskDelay(400);
   }
 }
+
+
 static void vTaskTouchEx(void *pvParameters)
 {
 	volatile uint32_t ulNotificationValue;
 	TS_StateTypeDef  ts;
 	static volatile GUI_PID_STATE TS_State = {0, 0, 0, 0};
-
-
-
 	while(1)
 	{
 		ulNotificationValue = ulTaskNotifyTake( pdTRUE, 50 );
@@ -398,12 +398,15 @@ void * token)
 AudioTime Total_AudioTime;
 extern char time_char[18];
 WM_HWIN xhWin;
+FATFS fs;
+char filename[256];
+extern uint8_t Play_Status;
 static void vTaskMusic(void *pvParameters)
 {
   FRESULT fr;
   DIR dj;
   FILINFO fno;
-  FATFS fs;
+
   unsigned int length=0;
   uint32_t ulNotifiedValue;
 
@@ -412,10 +415,13 @@ static void vTaskMusic(void *pvParameters)
 
   if (f_mount(&fs,(char*)"",1) == FR_OK)
   {
-	fr = f_findfirst(&dj, &fno, "", "*.wav");
+	fr = f_findfirst(&dj, &fno, "/Music", "*.wav");
+	strcpy(filename, "/Music/");
+	strcpy(&filename[7], fno.fname);
 	if (fr == FR_OK && fno.fname[0])
 	{
-		f_open(&fi, fno.fname, FA_READ);
+
+		f_open(&fi, filename, FA_READ);
 		f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
 		f_lseek(&fi, PLAY_HEADER);
 		f_read(&fi, buff, block_size*2, &length);
@@ -427,6 +433,8 @@ static void vTaskMusic(void *pvParameters)
 		Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
 		Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
 		Playback_Init(Wheader.Samplerate);
+
+		xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, portMAX_DELAY);
 		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
 		p.MsgId = WM_USER_UPDATEFILENAME;
 		p.Data.p = fno.fname;
@@ -434,6 +442,7 @@ static void vTaskMusic(void *pvParameters)
 
 		sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
 				Total_AudioTime.minute, Total_AudioTime.second);
+
 		WM_SendMessage(xhWin, &p);
         while(1)
         {
@@ -464,12 +473,27 @@ static void vTaskMusic(void *pvParameters)
             	sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
             							Total_AudioTime.minute, Total_AudioTime.second);
             }
+            if (ulNotifiedValue & 0x08)
+            {
+            	if (Play_Status == 1)
+            	{
+            		wm8994_Resume(AUDIO_I2C_ADDRESS);
+					HAL_SAI_DMAResume(&SaiHandle);
+            	}
+            	else
+            	{
+            		wm8994_Pause(AUDIO_I2C_ADDRESS);
+            		HAL_SAI_DMAPause(&SaiHandle);
+            	}
+            }
             if (f_tell(&fi) == f_size(&fi))
             {
             	fr = f_findnext(&dj, &fno);
             	if (fr == FR_OK && fno.fname[0])
             	{
-            		f_open(&fi, fno.fname, FA_READ);
+            		f_close(&fi);
+            		strcpy(&filename[7], fno.fname);
+            		f_open(&fi, filename, FA_READ);
 					f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
 					f_lseek(&fi, PLAY_HEADER);
 					f_read(&fi, buff, block_size*2, &length);
@@ -486,7 +510,7 @@ static void vTaskMusic(void *pvParameters)
             	}
             	else
             	{
-            		fr = f_findfirst(&dj, &fno, "", "*.wav");
+            		fr = f_findfirst(&dj, &fno, "/Music", "*.wav");
             	}
             }
             BSP_LED_Toggle(LED_RED);
@@ -510,10 +534,10 @@ static void AppTaskCreate(void)
 {
   xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
   xTaskCreate(vTaskMusic, "TaskMusic", 1024, NULL, 4, &xTaskMusic);
-  xTaskCreate(vTaskGUI, "TaskGUI", 1024, NULL, 1, &xTaskGUI);
+  xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 1, &xTaskGUI);
   xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
 
-  //xTimerStart(xTimerCreate("Timer", 600, pdTRUE, (void *) 0, vTimerLEDCallback), 0);
+
 }
 static void MPU_Config(void)
 {
@@ -593,7 +617,7 @@ int main(void)
 	  /* Init The JPEG Color Look Up Tables used for YCbCr to RGB conversion   */
 
 	  /* Init the HAL JPEG driver */
-	   JPEG_Handle.Instance = JPEG;
+	   //JPEG_Handle.Instance = JPEG;
 
 
 	   DMAUartHandle.Instance				  = DMA2_Stream7;
@@ -641,14 +665,17 @@ int main(void)
 		BSP_TS_Init (800, 480);
 		BSP_TS_ITConfig();
 		GUI_Init();
-  	WM_MULTIBUF_Enable(1);
+		GUI_SetBkColor(GUI_WHITE);
+	  GUI_Clear();
 
-	/* Activate the use of memory device feature */
-	WM_SetCreateFlags(WM_CF_MEMDEV);
+	  GUI_SetLayerVisEx (1, 0);
+	  GUI_SelectLayer(0);
+	  WM_SetCreateFlags(WM_CF_MEMDEV);
+	  WM_MULTIBUF_Enable(1);
 
-    //GUI_MTOUCH_Enable(1);
     AppTaskCreate();
-    HAL_Delay(3000);
+
+
     vTaskStartScheduler();
 
     while(1);
@@ -666,7 +693,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	if (TS_INT_PIN == GPIO_Pin)
 	{
 		vTaskNotifyGiveFromISR( xTaskTouchEx, &xHigherPriorityTaskWoken );
-    portYIELD_FROM_ISR( xHigherPriorityTaskWoken);
+		portYIELD_FROM_ISR( xHigherPriorityTaskWoken);
 	}
 }
 /**
@@ -931,6 +958,11 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack()
     use and may be called portEND_SWITCHING_ISR(). */
     portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
 }
+
+void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai)
+{
+	BSP_AUDIO_OUT_TransferComplete_CallBack();
+}
 /**
   * @brief Tx Transfer Half completed callbacks
   * @param  hsai : pointer to a SAI_HandleTypeDef structure that contains
@@ -955,7 +987,10 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack()
   use and may be called portEND_SWITCHING_ISR(). */
   portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
 }
-
+void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai)
+{
+	BSP_AUDIO_OUT_HalfTransfer_CallBack();
+}
 #ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
