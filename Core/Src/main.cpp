@@ -59,25 +59,6 @@ extern __IO uint32_t Previous_FrameSize;
 
 #define MP3_HEADER_SIZE_POSITION  0x06
 
-static RCC_PeriphCLKInitTypeDef  PeriphClkInitStruct;
-#define VSYNC           1
-#define VBP             1
-#define VFP             1
-#define VACT            480
-#define HSYNC           1
-#define HBP             1
-#define HFP             1
-#define HACT            400      /* !!!! SCREEN DIVIDED INTO 2 AREAS !!!! */
-
-#define LAYER0_ADDRESS  (LCD_FB_START_ADDRESS)
-#define LAYER1_ADDRESS  (LCD_FB_START_ADDRESS + 800 * 480 * 4)
-#define IMAGEBUFF_ADDRESS (LAYER1_ADDRESS + 800 * 480 * 4)
-#define GIFIMAGE_ADDRESS (IMAGEBUFF_ADDRESS + 800 * 480 * 4)
-#define GIFIMAGEBU_ADDRESS (GIFIMAGE_ADDRESS + 800 * 480*4)
-
-#define INVALID_AREA      0
-#define LEFT_AREA         1
-#define RIGHT_AREA        2
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 
@@ -142,38 +123,7 @@ volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 12;
 
 
 
-#if 0
-#define PATTERN_SEARCH_BUFFERSIZE 512
-uint8_t PatternSearchBuffer[PATTERN_SEARCH_BUFFERSIZE];
-uint32_t JPEG_FindFrameOffset(uint32_t offset, FIL *file)
-{
-  uint32_t index = offset, i, readSize=0;
 
-  do
-  {
-    if (f_size(file) <= (index+1))
-    {
-      return 0;
-    }
-    f_lseek(file, index);
-    f_read(file, PatternSearchBuffer, PATTERN_SEARCH_BUFFERSIZE, (UINT *)&readSize);
-    if (readSize!=0)
-    {
-      for (i=0; i<(readSize-1); i++)
-      {
-        if ((PatternSearchBuffer[i]==JPEG_SOI_MARKER_BYTE1) && (PatternSearchBuffer[i+1] == JPEG_SOI_MARKER_BYTE0))
-        {
-          return index + i;
-        }
-      }
-      index += (readSize - 1);
-    }
-  } while (readSize!=0);
-
-  return 0;
-}
-
-#endif
 AUDIO_DrvTypeDef *audio_drv;
 static void Playback_Init(uint32_t SampleRate)
 {
@@ -264,56 +214,7 @@ void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t
 	*((uint32_t*)(IMAGEBUFF_ADDRESS+(x+y* (decoder.GetGifWidth()))*4)) = ((uint16_t)red << 16) | ((uint16_t)green << 8) | (blue);
 }
 #endif
-bool fileSeekCallback(unsigned long position) 
-{
-	if (f_lseek(&fi, position) == FR_OK)
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
-}
 
-unsigned long filePositionCallback(void) 
-{
-    return f_tell(&fi);
-}
-int fileReadCallback(void) 
-{
-    uint8_t b;
-    FRESULT fr;
-    UINT ReadLen;
-    fr = f_read(&fi, &b, 1, &ReadLen);
-    if (fr == FR_OK && ReadLen == 1)
-    {
-      return b;
-    }
-    else
-    {
-      return -1;
-    }
-}
-#define BlockReadSize 512
-#define BlockBuffer PatternSearchBuffer
-int fileReadBlockCallback(void * buffer, int numberOfBytes) 
-{
-    uint8_t b;
-    FRESULT fr;
-    UINT ReadLen;
-
-    fr = f_read(&fi, buffer, numberOfBytes, &ReadLen);
-    if (fr == FR_OK)
-    {
-      return ReadLen;
-    }
-    else
-    {
-      return -1;
-    }
-    
-}
 /*gif call back functions end */
 /* USER CODE END 0 */
 
@@ -432,16 +333,15 @@ static void vTaskMusic(void *pvParameters)
 		Total_AudioTime.current_progress_insecond = 0;
 		Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
 		Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
-		Playback_Init(Wheader.Samplerate);
 
+		sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
+						Total_AudioTime.minute, Total_AudioTime.second);
+		Playback_Init(Wheader.Samplerate);
 		xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, portMAX_DELAY);
 		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
 		p.MsgId = WM_USER_UPDATEFILENAME;
 		p.Data.p = fno.fname;
 		p.hWin = xhWin;
-
-		sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
-				Total_AudioTime.minute, Total_AudioTime.second);
 
 		WM_SendMessage(xhWin, &p);
         while(1)
@@ -473,7 +373,7 @@ static void vTaskMusic(void *pvParameters)
             	sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
             							Total_AudioTime.minute, Total_AudioTime.second);
             }
-            if (ulNotifiedValue & 0x08)
+            if (ulNotifiedValue & 0x08 )
             {
             	if (Play_Status == 1)
             	{
@@ -486,7 +386,7 @@ static void vTaskMusic(void *pvParameters)
             		HAL_SAI_DMAPause(&SaiHandle);
             	}
             }
-            if (f_tell(&fi) == f_size(&fi))
+            if (f_tell(&fi) == f_size(&fi) || ulNotifiedValue &0x10)
             {
             	fr = f_findnext(&dj, &fno);
             	if (fr == FR_OK && fno.fname[0])
@@ -497,19 +397,18 @@ static void vTaskMusic(void *pvParameters)
 					f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
 					f_lseek(&fi, PLAY_HEADER);
 					f_read(&fi, buff, block_size*2, &length);
-
 					Total_AudioTime.total_second = (f_size(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
 					Total_AudioTime.second = Total_AudioTime.total_second % 60;
 					Total_AudioTime.minute = Total_AudioTime.total_second / 60;
 					Total_AudioTime.current_progress_insecond = 0;
 					Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
 					Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
-
 					WM_SendMessage(xhWin, &p);
 					wm8994_SetFrequency(AUDIO_I2C_ADDRESS, Wheader.Samplerate);
             	}
             	else
             	{
+            		f_lseek(&fi, f_size(&fi));
             		fr = f_findfirst(&dj, &fno, "/Music", "*.wav");
             	}
             }
@@ -520,10 +419,6 @@ static void vTaskMusic(void *pvParameters)
 
   }
 }
-//void vTimerLEDCallback(TimerHandle_t xTimer)
-//{
-//	BSP_LED_Toggle(LED3);
-//}
 
 void  vTaskGUI(void *pvParameters)
 {
@@ -799,55 +694,6 @@ static void MX_RTC_Init(void)
 
 
 
-/**
-  * @brief  Converts a line to an ARGB8888 pixel format.
-  * @param  pSrc: Pointer to source buffer
-  * @param  pDst: Output color
-  * @param  xSize: Buffer width
-  * @param  ColorMode: Input color mode
-  * @retval None
-  */
-static void CopyPicture(uint32_t *pSrc, uint32_t *pDst, uint16_t x, uint16_t y, uint16_t xsize, uint16_t ysize)
-{
-
-  uint32_t destination = (uint32_t)pDst + (y * 800 + x) * 4;
-  uint32_t source      = (uint32_t)pSrc;
-
-  /*##-1- Configure the DMA2D Mode, Color Mode and output offset #############*/
-  hdma2d.Init.Mode         = DMA2D_M2M_PFC;
-  hdma2d.Init.ColorMode    = DMA2D_OUTPUT_ARGB8888;
-  hdma2d.Init.OutputOffset = 800 - xsize;
-  hdma2d.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;  /* No Output Alpha Inversion*/
-  hdma2d.Init.RedBlueSwap   = DMA2D_RB_REGULAR;     /* No Output Red & Blue swap */
-
-  /*##-2- DMA2D Callbacks Configuration ######################################*/
-  hdma2d.XferCpltCallback  = NULL;
-
-  /*##-3- Foreground Configuration ###########################################*/
-  hdma2d.LayerCfg[1].AlphaMode = DMA2D_REPLACE_ALPHA;
-  hdma2d.LayerCfg[1].InputAlpha = 0xff;
-  hdma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_ARGB8888;
-  hdma2d.LayerCfg[1].InputOffset = 0;
-  hdma2d.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR; /* No ForeGround Red/Blue swap */
-  hdma2d.LayerCfg[1].AlphaInverted = DMA2D_REGULAR_ALPHA; /* No ForeGround Alpha inversion */
-
-  hdma2d.Instance          = DMA2D;
-
-  /* DMA2D Initialization */
-  if(HAL_DMA2D_Init(&hdma2d) == HAL_OK)
-  {
-    if(HAL_DMA2D_ConfigLayer(&hdma2d, 1) == HAL_OK)
-    {
-      if (HAL_DMA2D_Start(&hdma2d, source, destination, xsize, ysize) == HAL_OK)
-      {
-        /* Polling For DMA transfer */
-        HAL_DMA2D_PollForTransfer(&hdma2d, 100);
-      }
-    }
-  }
-}
-
-/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.

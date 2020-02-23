@@ -38,6 +38,7 @@
 #define ID_SLIDER_0 (GUI_ID_USER + 0x02)
 #define ID_TEXT_0 (GUI_ID_USER + 0x03)
 #define ID_TEXT_1 (GUI_ID_USER + 0x04)
+#define ID_BUTTON_1 (GUI_ID_USER + 0x05)
 
 
 // USER START (Optionally insert additional defines)
@@ -58,11 +59,12 @@
 *       _aDialogCreate
 */
 static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
-  { WINDOW_CreateIndirect, "Window", ID_WINDOW_0, 0, 0, 800, 480, 0, 0x0, 0 },
+  { WINDOW_CreateIndirect, "Window", ID_WINDOW_0, 1, 0, 800, 480, 0, 0x0, 0 },
   { BUTTON_CreateIndirect, "Play", ID_BUTTON_0, 363, 350, 75, 75, 0, 0x0, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_0, 128, 154, 569, 37, 0, 0x0, 0 },
   { TEXT_CreateIndirect, "title", ID_TEXT_0, 323, 21, 167, 38, 0, 0x64, 0 },
   { TEXT_CreateIndirect, "Time", ID_TEXT_1, 359, 205, 83, 30, 0, 0x64, 0 },
+  { BUTTON_CreateIndirect, "Button", ID_BUTTON_1, 509, 340, 80, 70, 0, 0x0, 0 },
   // USER START (Optionally insert additional widgets)
   // USER END
 };
@@ -116,6 +118,12 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     TEXT_SetFont(hItem, GUI_FONT_24_ASCII);
     TEXT_SetTextAlign(hItem, GUI_TA_HCENTER | GUI_TA_VCENTER);
     TEXT_SetText(hItem, "Time");
+    //
+    // Initialization of 'Button'
+    //
+    hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_1);
+    BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
+    BUTTON_SetText(hItem, "NEXT");
     // USER START (Optionally insert additional code for further widget initialization)
     // USER END
     break;
@@ -148,6 +156,20 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
         // USER END
         break;
       case WM_NOTIFICATION_VALUE_CHANGED:
+        // USER START (Optionally insert code for reacting on notification message)
+        // USER END
+        break;
+      // USER START (Optionally insert additional code for further notification handling)
+      // USER END
+      }
+      break;
+    case ID_BUTTON_1: // Notifications sent by 'Button'
+      switch(NCode) {
+      case WM_NOTIFICATION_CLICKED:
+        // USER START (Optionally insert code for reacting on notification message)
+        // USER END
+        break;
+      case WM_NOTIFICATION_RELEASED:
         // USER START (Optionally insert code for reacting on notification message)
         // USER END
         break;

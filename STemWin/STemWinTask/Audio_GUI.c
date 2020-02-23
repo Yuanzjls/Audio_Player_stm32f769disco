@@ -46,7 +46,7 @@ GUI_FONT     Font;
 #define ID_TEXT_2 (GUI_ID_USER + 0x08)
 #define ID_TEXT_3 (GUI_ID_USER + 0x09)
 #define ID_SLIDER_1 (GUI_ID_USER + 0x0a)
-
+#define ID_BUTTON_1 (GUI_ID_USER + 0x0b)
 // USER START (Optionally insert additional defines)
 #define Initial_volume (20)
 // USER END
@@ -65,7 +65,7 @@ char time_char[15];
 extern TaskHandle_t xTaskVolume;
 extern TaskHandle_t xTaskMusic;
 extern AudioTime Total_AudioTime;
-uint8_t Play_Status=0;
+uint8_t Play_Status=1;
 static FIL fi_xbf;
 // USER END
 
@@ -82,6 +82,7 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   { TEXT_CreateIndirect, "Filename", ID_TEXT_2, 0, 70, 799, 32, 0, 0x64, 0 },
   { TEXT_CreateIndirect, "Text", ID_TEXT_3, 91, 208, 127, 20, 0, 0x64, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_1, 248, 190, 425, 47, 0, 0x0, 0 },
+  { BUTTON_CreateIndirect, "Button", ID_BUTTON_1, 509, 340, 80, 70, 0, 0x0, 0 },
   // USER START (Optionally insert additional widgets)
   // USER END
 };
@@ -185,8 +186,15 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     TEXT_SetText(hItem, time_char);
 
     hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
-	SLIDER_SetRange(hItem, 0, 100);
+	SLIDER_SetRange(hItem, 0, Total_AudioTime.total_second);
 	SLIDER_SetValue(hItem, 0);
+
+	//
+	    // Initialization of 'Button'
+	    //
+	hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_1);
+	BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
+	BUTTON_SetText(hItem, "NEXT");
 
 	hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
     // USER END
@@ -226,14 +234,24 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 
         // USER END
         break;
-
-      case WM_NOTIFICATION_MOVED_OUT:
-
-    	  break;
       // USER START (Optionally insert additional code for further notification handling)
       // USER END
       }
       break;
+      case ID_BUTTON_1: // Notifications sent by 'Button'
+            switch(NCode) {
+            case WM_NOTIFICATION_CLICKED:
+              // USER START (Optionally insert code for reacting on notification message)
+            	xTaskNotify(xTaskMusic, 0x10, eSetBits);
+              // USER END
+              break;
+            case WM_NOTIFICATION_RELEASED:
+              // USER START (Optionally insert code for reacting on notification message)
+              // USER END
+              break;
+            // USER START (Optionally insert additional code for further notification handling)
+            // USER END
+            }
     case ID_SLIDER_0: // Notifications sent by 'Slider'
       switch(NCode) {
       case WM_NOTIFICATION_CLICKED:
@@ -270,10 +288,9 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
           break;
         case WM_NOTIFICATION_RELEASED:
         	hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
-		  Total_AudioTime.current_progress_insecond = SLIDER_GetValue(hItem)*Total_AudioTime.total_second/100;
-		  hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
+		  Total_AudioTime.current_progress_insecond = SLIDER_GetValue(hItem);
 		  xTaskNotify(xTaskMusic, 0x04, eSetBits);
-
+		  hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
           break;
         case WM_NOTIFICATION_VALUE_CHANGED:
           // USER START (Optionally insert code for reacting on notification message)
@@ -292,12 +309,14 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 		hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_3);
 		TEXT_SetText(hItem, time_char);
 		hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
-		SLIDER_SetValue(hItem, 100 * Total_AudioTime.current_progress_insecond/ Total_AudioTime.total_second);
+		SLIDER_SetValue(hItem, Total_AudioTime.current_progress_insecond);
 		WM_RestartTimer(pMsg->Data.v, 100);
 		break;
 	case WM_USER_UPDATEFILENAME:
 		hItem = WM_GetDialogItem(pMsg->hWin, ID_TEXT_2);
 		TEXT_SetText(hItem, pMsg->Data.p);
+	    hItem = WM_GetDialogItem(pMsg->hWin, ID_SLIDER_1);
+		SLIDER_SetRange(hItem, 0, Total_AudioTime.total_second);
 		break;
   // USER END
   default:
