@@ -2194,32 +2194,47 @@ static void SD_DMATransmitCplt(DMA_HandleTypeDef *hdma)
   * @param  hdma DMA handle
   * @retval None
   */
-static void SD_DMAReceiveCplt(DMA_HandleTypeDef *hdma)  
+static void SD_DMAReceiveCplt(DMA_HandleTypeDef *hdma)
 {
-  SD_HandleTypeDef* hsd = (SD_HandleTypeDef* )(hdma->Parent);
-  uint32_t errorstate = HAL_SD_ERROR_NONE;
-  
-  /* Send stop command in multiblock write */
-  if(hsd->Context == (SD_CONTEXT_READ_MULTIPLE_BLOCK | SD_CONTEXT_DMA))
-  {
-    errorstate = SDMMC_CmdStopTransfer(hsd->Instance);
-    if(errorstate != HAL_SD_ERROR_NONE)
-    {
-      hsd->ErrorCode |= errorstate;
-      HAL_SD_ErrorCallback(hsd);
-    }
-  }
-  
-  /* Disable the DMA transfer for transmit request by setting the DMAEN bit
-  in the SD DCTRL register */
-  hsd->Instance->DCTRL &= (uint32_t)~((uint32_t)SDMMC_DCTRL_DMAEN);
-  
-  /* Clear all the static flags */
-  __HAL_SD_CLEAR_FLAG(hsd, SDMMC_STATIC_FLAGS);
-  
-  hsd->State = HAL_SD_STATE_READY;
+ SD_HandleTypeDef* hsd = (SD_HandleTypeDef* )(hdma->Parent);
+ uint32_t errorstate = HAL_SD_ERROR_NONE;
 
-  HAL_SD_RxCpltCallback(hsd);
+ /* Send stop command in multiblock write */
+ if(hsd->Context == (SD_CONTEXT_READ_MULTIPLE_BLOCK | SD_CONTEXT_DMA))
+ {
+	 errorstate = SDMMC_CmdStopTransfer(hsd->Instance);
+	 if(errorstate != HAL_SD_ERROR_NONE)
+	 {
+		 hsd->ErrorCode |= errorstate;
+		 HAL_SD_ErrorCallback(hsd);
+	 }
+ }
+
+ /* Disable the DMA transfer for transmit request by setting the DMAEN bit
+ in the SD DCTRL register */
+ hsd->Instance->DCTRL &= (uint32_t)~((uint32_t)SDMMC_DCTRL_DMAEN);
+
+ /* Check current state of Command Register and don't clear those flags */
+ if (hsd->Context == (SD_CONTEXT_READ_SINGLE_BLOCK | SD_CONTEXT_DMA))
+ {
+	 if (__HAL_SD_GET_FLAG(hsd, SDMMC_FLAG_CMDREND)) {
+		 /* Clear only selected flags */
+		 __HAL_SD_CLEAR_FLAG(hsd, ((uint32_t)(SDMMC_FLAG_DCRCFAIL | SDMMC_FLAG_DTIMEOUT |
+		 SDMMC_FLAG_TXUNDERR | SDMMC_FLAG_RXOVERR |
+		 SDMMC_FLAG_CMDSENT | SDMMC_FLAG_DATAEND | SDMMC_FLAG_DBCKEND)));
+	 } else {
+	 /* Clear all the static flags */
+		 __HAL_SD_CLEAR_FLAG(hsd, SDMMC_STATIC_FLAGS);
+	 }
+ }
+ else
+ {
+	 /* Clear all the static flags */
+	 __HAL_SD_CLEAR_FLAG(hsd, SDMMC_STATIC_FLAGS);
+ }
+
+ hsd->State = HAL_SD_STATE_READY;
+ HAL_SD_RxCpltCallback(hsd);
 }
 
 /**

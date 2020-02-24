@@ -101,7 +101,7 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   { TEXT_CreateIndirect, "Filename", ID_TEXT_2, 0, 70, 799, 32, 0, 0x64, 0 },
   { TEXT_CreateIndirect, "Text", ID_TEXT_3, 91, 208, 127, 20, 0, 0x64, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_1, 248, 190, 425, 47, 0, 0x0, 0 },
-  { BUTTON_CreateIndirect, "Button", ID_BUTTON_1, 509, 340, 80, 70, 0, 0x0, 0 },
+  { BUTTON_CreateIndirect, "", ID_BUTTON_1, 509, 340, 60, 60, 0, 0x0, 0 },
   // USER START (Optionally insert additional widgets)
   // USER END
 };
@@ -223,7 +223,8 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 	    //
 	hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_1);
 	BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
-	BUTTON_SetText(hItem, "NEXT");
+	BUTTON_SetBitmap(hItem, 0, &audio_bmforeward_des);
+	BUTTON_SetBitmap(hItem, 1, &audio_bmforeward_pressed);
 
 	hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
     // USER END

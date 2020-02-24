@@ -16,7 +16,7 @@
 #define DEV_MMC		0	/* Example: Map MMC/SD card to physical drive 1 */
 #define DEV_USB		2	/* Example: Map USB MSD to physical drive 2 */
 
-#define SD_TIMEOUT SDMMC_DATATIMEOUT
+#define SD_TIMEOUT 1000
 #define SD_DEFAULT_BLOCK_SIZE 512
 /*-----------------------------------------------------------------------*/
 /* Get Drive Status                                                      */
@@ -114,7 +114,7 @@ DRESULT disk_read (
 {
 	DRESULT res;
 	int result;
-
+	uint32_t timer;
 
 	switch (pdrv) {
 	case DEV_RAM :
@@ -139,12 +139,15 @@ DRESULT disk_read (
 			{
 				/* We were able to obtain the semaphore and can now access the
 				shared resource. */
-
-				while(BSP_SD_GetCardState()!= MSD_OK)
+				timer = xTaskGetTickCount() + SD_TIMEOUT;
+				while(timer > xTaskGetTickCount())
 				{
-					;
+					if (BSP_SD_GetCardState()== MSD_OK)
+					{
+						res = RES_OK;
+						break;
+					}
 				}
-				res = RES_OK;
 			}
 
 		}

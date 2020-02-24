@@ -416,7 +416,14 @@ static void vTaskMusic(void *pvParameters)
           }
         }
 	}
-
+  }
+  else
+  {
+	  while(1)
+	  {
+		  BSP_LED_Toggle(LED_RED);
+		  vTaskDelay(2000);
+	  }
   }
 }
 
