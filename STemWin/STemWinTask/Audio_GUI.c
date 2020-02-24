@@ -49,6 +49,7 @@ GUI_FONT     Font;
 #define ID_TEXT_3 (GUI_ID_USER + 0x09)
 #define ID_SLIDER_1 (GUI_ID_USER + 0x0a)
 #define ID_BUTTON_1 (GUI_ID_USER + 0x0b)
+#define ID_BUTTON_2 (GUI_ID_USER + 0x0c)
 // USER START (Optionally insert additional defines)
 #define Initial_volume (20)
 // USER END
@@ -69,6 +70,8 @@ extern TaskHandle_t xTaskMusic;
 extern AudioTime Total_AudioTime;
 uint8_t Play_Status=1;
 static FIL fi_xbf;
+uint8_t Repeat_Status=0;
+
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay_pressed;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_pressed;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop_pressed;
@@ -86,6 +89,17 @@ extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_des;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop_des;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward_des;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward_des;
+
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_all_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_all_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_all;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one_pressed;
+
 // USER END
 
 /*********************************************************************
@@ -102,6 +116,7 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
   { TEXT_CreateIndirect, "Text", ID_TEXT_3, 91, 208, 127, 20, 0, 0x64, 0 },
   { SLIDER_CreateIndirect, "Slider", ID_SLIDER_1, 248, 190, 425, 47, 0, 0x0, 0 },
   { BUTTON_CreateIndirect, "", ID_BUTTON_1, 509, 340, 60, 60, 0, 0x0, 0 },
+  { BUTTON_CreateIndirect, "", ID_BUTTON_2, 221, 340, 60, 60, 0, 0x0, 0 },
   // USER START (Optionally insert additional widgets)
   // USER END
 };
@@ -168,7 +183,6 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
     // Initialization of 'PLAY'
     //
     hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_0);
-    BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
     BUTTON_SetBitmap(hItem, 0, &audio_bmpause_des);
     BUTTON_SetBitmap(hItem, 1, &audio_bmpause_pressed);
     //BUTTON_SetText(hItem, "PAUSE");
@@ -222,9 +236,12 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 	    // Initialization of 'Button'
 	    //
 	hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_1);
-	BUTTON_SetFont(hItem, GUI_FONT_24_ASCII);
 	BUTTON_SetBitmap(hItem, 0, &audio_bmforeward_des);
 	BUTTON_SetBitmap(hItem, 1, &audio_bmforeward_pressed);
+
+	hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_2);
+	BUTTON_SetBitmap(hItem, 0, &audio_bmrepeat_off_des);
+	BUTTON_SetBitmap(hItem, 1, &audio_bmrepeat_off_pressed);
 
 	hTimerProcess = WM_CreateTimer(pMsg->hWin, 0, 100, 0);
     // USER END
@@ -261,9 +278,6 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
         break;
       case WM_NOTIFICATION_RELEASED:
         // USER START (Optionally insert code for reacting on notification message)
-
-
-
         // USER END
         break;
       // USER START (Optionally insert additional code for further notification handling)
@@ -284,6 +298,40 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
             // USER START (Optionally insert additional code for further notification handling)
             // USER END
             }
+            break;
+		case ID_BUTTON_2: // Notifications sent by 'PLAY'
+		  switch(NCode) {
+		  case WM_NOTIFICATION_CLICKED:
+			// USER START (Optionally insert code for reacting on notification message)
+			  hItem = WM_GetDialogItem(pMsg->hWin, ID_BUTTON_2);
+			  //BUTTON_SetPressed(hItem, 0);
+			 if (BUTTON_IsPressed(hItem) == 1)
+			 {
+				 if (Repeat_Status == 0)
+				 {
+					 Repeat_Status = 1;
+					 BUTTON_SetBitmap(hItem, 1, &audio_bmrepeat_one_des);
+					 BUTTON_SetBitmap(hItem, 0, &audio_bmrepeat_one_pressed);
+				 }
+				 else
+				 {
+					 Repeat_Status = 0;
+					 BUTTON_SetBitmap(hItem, 0, &audio_bmrepeat_off_des);
+					 BUTTON_SetBitmap(hItem, 1, &audio_bmrepeat_off_pressed);
+				 }
+				 //xTaskNotify(xTaskMusic, 0x08, eSetBits);
+			 }
+
+			// USER END
+			break;
+		  case WM_NOTIFICATION_RELEASED:
+			// USER START (Optionally insert code for reacting on notification message)
+			// USER END
+			break;
+		  // USER START (Optionally insert additional code for further notification handling)
+		  // USER END
+		  }
+		  break;
     case ID_SLIDER_0: // Notifications sent by 'Slider'
       switch(NCode) {
       case WM_NOTIFICATION_CLICKED:
@@ -332,6 +380,7 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
         // USER START (Optionally insert additional code for further notification handling)
         // USER END
         }
+        break;
     // USER END
     }
     break;
