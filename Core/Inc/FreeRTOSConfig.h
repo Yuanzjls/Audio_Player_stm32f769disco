@@ -50,7 +50,7 @@
 #define configTICK_RATE_HZ						( 1000 )
 #define configMAX_PRIORITIES					( 5 )
 #define configMINIMAL_STACK_SIZE				( ( unsigned short ) 128 )
-#define configTOTAL_HEAP_SIZE					( ( size_t ) ( 60 * 1024 ) )
+#define configTOTAL_HEAP_SIZE					( ( size_t ) ( 200 * 1024 ) )
 #define configMAX_TASK_NAME_LEN					( 10 )
 #define configUSE_TRACE_FACILITY				1
 #define configUSE_16_BIT_TICKS					0
@@ -117,7 +117,7 @@ function. */
 routine that makes calls to interrupt safe FreeRTOS API functions.  DO NOT CALL
 INTERRUPT SAFE FREERTOS API FUNCTIONS FROM ANY INTERRUPT THAT HAS A HIGHER
 PRIORITY THAN THIS! (higher priorities are lower numeric values. */
-#define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY	4
+#define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY	1
 
 /* Interrupt priorities used by the kernel port layer itself.  These are generic
 to all Cortex-M ports, and do not rely on any particular library functions. */
@@ -144,7 +144,7 @@ files. */
 	/* Normal assert() semantics without relying on the provision of an assert.h
 	header file. */
 	extern void vAssertCalled( uint32_t ulLine, const char *pcFile );
-	#define configASSERT( x ) if( ( x ) == 0 ) vAssertCalled( __LINE__, __FILE__ )
+	#define configASSERT( x ) if( ( x ) == 0 ) { taskDISABLE_INTERRUPTS(); for( ;; ); taskEXIT_CRITICAL();}
 
 #endif /* __IAR_SYSTEMS_ASM__ */
 

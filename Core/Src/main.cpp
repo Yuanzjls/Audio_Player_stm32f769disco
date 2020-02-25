@@ -99,27 +99,19 @@ static void CopyPicture(uint32_t *pSrc,
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
-
-void vAssertCalled( unsigned long ulLine, const char * const pcFileName )
+void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName )
 {
-static portBASE_TYPE xPrinted = pdFALSE;
-volatile uint32_t ulSetToNonZeroInDebuggerToContinue = 12;
+	xTaskHandle *bad_task_handle;
+	signed char *bad_task_name;
 
-    /* Parameters are not used. */
-    ( void ) ulLine;
-    ( void ) pcFileName;
-
-    //taskENTER_CRITICAL();
-    {
-        /* You can step out of this function to debug the assertion by using
-        the debugger to set ulSetToNonZeroInDebuggerToContinue to a non-zero
-        value. */
-        while( ulSetToNonZeroInDebuggerToContinue == 0 )
-        {
-        }
-    }
-    //taskEXIT_CRITICAL();
+    bad_task_handle = pxTask;     // this seems to give me the crashed task handle
+    bad_task_name = pcTaskName;     // this seems to give me a pointer to the name of the crashed task
+    //mLED_3_On();   // a LED is lit when the task has crashed
+    taskDISABLE_INTERRUPTS();
+    for( ;; );
+    taskEXIT_CRITICAL();
 }
+
 
 
 
@@ -409,6 +401,7 @@ static void vTaskMusic(void *pvParameters)
             	}
             	else
             	{
+            		f_closedir(&dj);
             		f_lseek(&fi, f_size(&fi));
             		fr = f_findfirst(&dj, &fno, "/Music", "*.wav");
             	}
@@ -440,7 +433,7 @@ void  vTaskGUI(void *pvParameters)
 static void AppTaskCreate(void)
 {
   xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
-  xTaskCreate(vTaskMusic, "TaskMusic", 1024, NULL, 4, &xTaskMusic);
+  xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
   xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 1, &xTaskGUI);
   xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
 
