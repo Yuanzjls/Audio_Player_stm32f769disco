@@ -76,11 +76,9 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32F769NIHx_FLASH.ld")
 file(GLOB HAL_SOURCES "Drivers/STM32F7xx_HAL_Driver/Src/*.c")
 list(FILTER HAL_SOURCES EXCLUDE REGEX "_template\\.c$")
 
+# The BSP LCD and audio drivers are intentionally absent: the display is driven by
+# STemWin/Config/LCDConf.c and main.cpp drives the WM8994 codec / SAI directly.
 file(GLOB BSP_SOURCES "Drivers/BSP/STM32F769I-Discovery/*.c")
-# Not part of the build (as in the original TrueSTUDIO project):
-#  - _lcd.c:   the display is driven by STemWin/Config/LCDConf.c (own DSI/LTDC handles)
-#  - _audio.c: main.cpp drives the WM8994/SAI directly and owns the SAI callbacks
-list(FILTER BSP_SOURCES EXCLUDE REGEX "stm32f769i_discovery_(lcd|audio)\\.c$")
 
 set(BSP_COMPONENT_SOURCES
   Drivers/BSP/Components/adv7533/adv7533.c
@@ -113,18 +111,7 @@ set(FREERTOS_SOURCES
 file(GLOB STEMWIN_SOURCES
   "STemWin/Config/*.c"
   "STemWin/GUI_X/*.c"
-  "STemWin/STemWin_Addons/*.c"
-)
-# The other files in STemWin/STemWinTask are earlier STemWin samples that each
-# define their own MainTask/CreateFramewin; only the audio player GUI is built.
-list(APPEND STEMWIN_SOURCES
-  STemWin/STemWinTask/Audio_GUI.c
-  STemWin/STemWinTask/audio_player_res.c
-)
-
-set(UTILITIES_SOURCES
-  Utilities/CPU/cpu_utils.c
-  Utilities/JPEG/jpeg_utils.c
+  "STemWin/STemWinTask/*.c"
 )
 
 add_executable(${PROJECT_NAME}
@@ -136,7 +123,6 @@ add_executable(${PROJECT_NAME}
   ${FATFS_SOURCES}
   ${FREERTOS_SOURCES}
   ${STEMWIN_SOURCES}
-  ${UTILITIES_SOURCES}
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -161,10 +147,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   STemWin/Config
   STemWin/STemWinTask
   STemWin/STemWin_Addons
-  GIF_Decode
-  Utilities/CPU
   Utilities/Fonts
-  Utilities/JPEG
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE

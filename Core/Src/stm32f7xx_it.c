@@ -77,10 +77,7 @@ extern void xPortSysTickHandler(void);
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-DMA2D_HandleTypeDef hdma2d;
 extern SAI_HandleTypeDef SaiHandle;
-extern LTDC_HandleTypeDef hltdc;
-extern DSI_HandleTypeDef hdsi;
 extern UART_HandleTypeDef UartHandle;
 extern SD_HandleTypeDef uSdHandle;
 /* USER CODE BEGIN EV */
@@ -163,18 +160,7 @@ void UsageFault_Handler(void)
   }
 }
 
-/**
-  * @brief This function handles System service call via SWI instruction.
-  */
-__weak void SVC_Handler(void)
-{
-  /* USER CODE BEGIN SVCall_IRQn 0 */
-
-  /* USER CODE END SVCall_IRQn 0 */
-  /* USER CODE BEGIN SVCall_IRQn 1 */
-
-  /* USER CODE END SVCall_IRQn 1 */
-}
+/* SVC_Handler and PendSV_Handler are provided by the FreeRTOS port (port.c) */
 
 /**
   * @brief This function handles Debug monitor.
@@ -190,19 +176,6 @@ void DebugMon_Handler(void)
 }
 
 /**
-  * @brief This function handles Pendable request for system service.
-  */
-__weak void PendSV_Handler(void)
-{
-  /* USER CODE BEGIN PendSV_IRQn 0 */
-
-  /* USER CODE END PendSV_IRQn 0 */
-  /* USER CODE BEGIN PendSV_IRQn 1 */
-
-  /* USER CODE END PendSV_IRQn 1 */
-}
-
-/**
   * @brief This function handles System tick timer.
   */
 
@@ -214,7 +187,7 @@ void SysTick_Handler(void)
 		xPortSysTickHandler();
 	}
   /* USER CODE END SysTick_IRQn 0 */
-  //HAL_IncTick();
+  /* HAL tick comes from TIM (stm32f7xx_hal_timebase_tim.c), not SysTick */
   /* USER CODE BEGIN SysTick_IRQn 1 */
 
   /* USER CODE END SysTick_IRQn 1 */
@@ -235,39 +208,13 @@ void LTDC_IRQHandler(void)
   /* USER CODE BEGIN LTDC_IRQn 0 */
 
   /* USER CODE END LTDC_IRQn 0 */
-  //HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
 
   /* USER CODE END LTDC_IRQn 1 */
 }
 
-/**
-  * @brief This function handles DMA2D global interrupt.
-  */
-__weak void DMA2D_IRQHandler(void)
-{
-  /* USER CODE BEGIN DMA2D_IRQn 0 */
-
-  /* USER CODE END DMA2D_IRQn 0 */
-  HAL_DMA2D_IRQHandler(&hdma2d);
-  /* USER CODE BEGIN DMA2D_IRQn 1 */
-
-  /* USER CODE END DMA2D_IRQn 1 */
-}
-
-/**
-  * @brief This function handles DSI global interrupt.
-  */
-__weak void DSI_IRQHandler(void)
-{
-  /* USER CODE BEGIN DSI_IRQn 0 */
-
-  /* USER CODE END DSI_IRQn 0 */
- // HAL_DSI_IRQHandler(&hdsi);
-  /* USER CODE BEGIN DSI_IRQn 1 */
-
-  /* USER CODE END DSI_IRQn 1 */
-}
+/* DSI_IRQHandler is provided by STemWin/Config/LCDConf.c.
+   DMA2D is used by LCDConf.c in polling mode, so its interrupt is never enabled. */
 
 /******************************************************************************/
 /*                 STM32F7xx Peripherals Interrupt Handlers                   */

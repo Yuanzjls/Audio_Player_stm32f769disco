@@ -54,9 +54,6 @@ extern "C" {
 #include "stm32f769i_discovery_sdram.h"
 #include "stm32f769i_discovery_sd.h"
 #include "ff.h"
-#include "jpeg_utils.h"
-#include <decode_polling.h>
-#include "jpeg_utils.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
@@ -136,7 +133,6 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
-uint16_t GBK2UTF16(const char * str);
 void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName );
 #ifdef __cplusplus
 }

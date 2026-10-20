@@ -101,9 +101,7 @@ return len;
 
 int _write(int file, char *ptr, int len)
 {
-	int DataIdx;
-
-	HAL_UART_Transmit_DMA(&UartHandle, ptr, len);
+	HAL_UART_Transmit_DMA(&UartHandle, (uint8_t *)ptr, len);
 	return len;
 }
 

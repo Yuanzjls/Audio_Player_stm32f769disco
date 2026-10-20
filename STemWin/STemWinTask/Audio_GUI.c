@@ -72,32 +72,16 @@ uint8_t Play_Status=1;
 static FIL fi_xbf;
 uint8_t Repeat_Status=0;
 
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay_pressed;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_pressed;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop_pressed;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward_pressed;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward_pressed;
-
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward;
-
+/* Button bitmaps (audio_player_res.c) */
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmplay_pressed;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_des;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmstop_des;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmbackward_des;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmpause_pressed;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward_des;
-
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one_des;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmforeward_pressed;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off_des;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_all_pressed;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_all_des;
-extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_all;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_off_pressed;
+extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one_des;
 extern GUI_CONST_STORAGE GUI_BITMAP audio_bmrepeat_one_pressed;
 
 // USER END
@@ -123,11 +107,10 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
 
 
 
+/* XBF font loader: reads glyph data for the YaHei font from the SD card */
 static int _cbGetData(U32 Off, U16 NumBytes, void * pVoid, void * pBuffer) {
-  //FIL hFile;
   UINT   NumBytesRead;
 
-  //hFile = *(FIL *)pVoid;
   //
   // Set file pointer to the requested position
   //
@@ -437,10 +420,6 @@ void YaHeiFont_Init(void)
 }
 __weak void MainTask(void)
 {
-
-	uint16_t fr, re_font;
-
-
 	GUI_Clear();
 
 	YaHeiFont_Init();
