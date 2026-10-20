@@ -52,7 +52,7 @@
 #include <time.h>
 #include <main.h>
 
-extern UART_HandleTypeDef UartHandle;
+#include "log.h"
 /* Variables */
 //#undef errno
 extern int errno;
@@ -101,7 +101,8 @@ return len;
 
 int _write(int file, char *ptr, int len)
 {
-	HAL_UART_Transmit_DMA(&UartHandle, (uint8_t *)ptr, len);
+	/* printf() output goes to the ST-LINK virtual COM port */
+	log_write(ptr, (size_t)len);
 	return len;
 }
 

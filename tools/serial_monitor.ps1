@@ -1,13 +1,12 @@
 # Serial monitor for the STM32F769I-Discovery ST-LINK virtual COM port.
-# Defaults match the firmware (main.cpp: USART1, 9600 baud, UART_WORDLENGTH_8B incl. ODD parity
-# => 7 data bits + odd parity + 1 stop bit on the host side).
+# Defaults match the firmware log (Board/Src/log.c: USART1, 115200 baud, 8N1).
 # Ctrl+C to quit.
 param(
   [string]$Port = "",           # e.g. COM8; empty = auto-detect the ST-LINK VCP
-  [int]$Baud = 9600,
-  [int]$DataBits = 7,
+  [int]$Baud = 115200,
+  [int]$DataBits = 8,
   [ValidateSet("None", "Odd", "Even", "Mark", "Space")]
-  [string]$Parity = "Odd",
+  [string]$Parity = "None",
   [ValidateSet("One", "Two", "OnePointFive")]
   [string]$StopBits = "One"
 )

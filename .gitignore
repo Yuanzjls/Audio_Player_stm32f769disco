@@ -1,3 +1,1 @@
 build/
-# STemWin binaries are under ST's click-through license; keep them local
-STemWin/Lib/*.a

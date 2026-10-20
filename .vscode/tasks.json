@@ -97,7 +97,7 @@
     },
     {
       "label": "Monitor",
-      "detail": "ST-LINK virtual COM port, 9600 7O1 (Ctrl+C to stop)",
+      "detail": "ST-LINK virtual COM port, 115200 8N1 (Ctrl+C to stop)",
       "type": "process",
       "command": "powershell.exe",
       "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/serial_monitor.ps1"],

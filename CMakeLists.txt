@@ -4,10 +4,9 @@ if(NOT CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/gcc-arm-none-eabi.cmake")
 endif()
 
-project(Audio_Player_stm32f769disco C CXX ASM)
+project(Audio_Player_stm32f769disco C ASM)
 
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_EXECUTABLE_SUFFIX ".elf")
 
@@ -15,69 +14,72 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# ---------------------------------------------------------------------------
-# STemWin binary library (not redistributable, so it is not in the repo).
-# Get it from the STM32CubeF7 package (st.com), folder
-#   Middlewares/ST/STemWin/Lib/  -> STemWin_CM7_OS_wc32_ot_ARGB.a (GCC, CM7, with OS)
-# and copy it to STemWin/Lib/, or pass -DSTEMWIN_LIB=<path to .a>.
-# The headers in STemWin/Include are version 5.44 (CubeF7 1.15 / 1.16).
-# ---------------------------------------------------------------------------
-set(STEMWIN_LIB "" CACHE FILEPATH "Path to the STemWin GCC library for Cortex-M7 with OS support")
-if(NOT STEMWIN_LIB)
-  file(GLOB _stemwin_candidates "${CMAKE_CURRENT_SOURCE_DIR}/STemWin/Lib/*CM7_OS*.a")
-  list(SORT _stemwin_candidates)
-  # Prefer the "ot" (optimized for time) variant when several are present
-  foreach(_lib IN LISTS _stemwin_candidates)
-    if(_lib MATCHES "_ot_")
-      set(STEMWIN_LIB "${_lib}")
-      break()
-    endif()
-  endforeach()
-  if(NOT STEMWIN_LIB AND _stemwin_candidates)
-    list(GET _stemwin_candidates 0 STEMWIN_LIB)
-  endif()
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/lvgl/lvgl.h")
+  message(FATAL_ERROR "LVGL is missing. Run: git submodule update --init")
 endif()
-if(STEMWIN_LIB)
-  message(STATUS "STemWin library: ${STEMWIN_LIB}")
-else()
-  message(WARNING
-    "STemWin library not found. Sources will compile but linking will fail.\n"
-    "Copy STemWin_CM7_OS_wc32_ot_ARGB.a from STM32CubeF7 (Middlewares/ST/STemWin/Lib) "
-    "into STemWin/Lib/ or pass -DSTEMWIN_LIB=<path>.")
-endif()
-
-# STemWin add-ons (SLIDER_SetSTSkin, ...) also ship as a binary in STM32CubeF7:
-#   Middlewares/ST/STemWin/Software... or the F769I-Discovery demonstration -> STemWin_Addons_CM7_wc32.a
-set(STEMWIN_ADDONS_LIB "" CACHE FILEPATH "Path to the STemWin add-ons GCC library for Cortex-M7")
-if(NOT STEMWIN_ADDONS_LIB)
-  file(GLOB _addons_candidates "${CMAKE_CURRENT_SOURCE_DIR}/STemWin/Lib/*Addons*CM7*.a")
-  if(_addons_candidates)
-    list(GET _addons_candidates 0 STEMWIN_ADDONS_LIB)
-  endif()
-endif()
-if(STEMWIN_ADDONS_LIB)
-  message(STATUS "STemWin add-ons library: ${STEMWIN_ADDONS_LIB}")
-else()
-  message(WARNING
-    "STemWin add-ons library not found (needed for SLIDER_SetSTSkin). "
-    "Copy STemWin_Addons_CM7_wc32.a into STemWin/Lib/ or pass -DSTEMWIN_ADDONS_LIB=<path>.")
-endif()
-
-# ---------------------------------------------------------------------------
-# MCU flags: STM32F769NI = Cortex-M7 with double-precision FPU
-# ---------------------------------------------------------------------------
-set(MCU_FLAGS -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard)
 
 set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32F769NIHx_FLASH.ld")
 
 # ---------------------------------------------------------------------------
-# Sources
+# Settings shared by the application and LVGL
+# (STM32F769NI = Cortex-M7 with double-precision FPU)
+# ---------------------------------------------------------------------------
+add_library(board_config INTERFACE)
+
+target_compile_definitions(board_config INTERFACE
+  USE_HAL_DRIVER
+  STM32F769xx
+  USE_STM32F769I_DISCO
+  LV_CONF_INCLUDE_SIMPLE
+  $<$<CONFIG:Debug>:DEBUG>
+)
+
+target_include_directories(board_config INTERFACE
+  Core/Inc
+  Drivers/STM32F7xx_HAL_Driver/Inc
+  Drivers/STM32F7xx_HAL_Driver/Inc/Legacy
+  Drivers/CMSIS/Device/ST/STM32F7xx/Include
+  Drivers/CMSIS/Include
+  Drivers/BSP/STM32F769I-Discovery
+  Drivers/BSP/Components
+  Drivers/BSP/Components/Common
+  FATFS
+  FREERTOS/include
+  FREERTOS/portable
+  Middlewares/lvgl
+)
+
+target_compile_options(board_config INTERFACE
+  -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard
+  -ffunction-sections
+  -fdata-sections
+  $<$<COMPILE_LANGUAGE:ASM>:-x assembler-with-cpp>
+  $<$<CONFIG:Debug>:-Og -g3>
+  $<$<CONFIG:Release>:-O2 -g>
+  $<$<CONFIG:MinSizeRel>:-Os -g>
+)
+
+target_link_options(board_config INTERFACE
+  -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard
+)
+
+# ---------------------------------------------------------------------------
+# LVGL (git submodule, configured by Core/Inc/lv_conf.h)
+# ---------------------------------------------------------------------------
+file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS "Middlewares/lvgl/src/*.c")
+add_library(lvgl STATIC ${LVGL_SOURCES})
+target_link_libraries(lvgl PRIVATE board_config)
+# Speed matters more than debuggability inside LVGL, even in Debug builds
+target_compile_options(lvgl PRIVATE -O2 -w)
+
+# ---------------------------------------------------------------------------
+# Firmware
 # ---------------------------------------------------------------------------
 file(GLOB HAL_SOURCES "Drivers/STM32F7xx_HAL_Driver/Src/*.c")
-list(FILTER HAL_SOURCES EXCLUDE REGEX "_template\\.c$")
+list(FILTER HAL_SOURCES EXCLUDE REGEX "_template\.c$")
 
-# The BSP LCD and audio drivers are intentionally absent: the display is driven by
-# STemWin/Config/LCDConf.c and main.cpp drives the WM8994 codec / SAI directly.
+# The BSP LCD and audio drivers are intentionally absent: the display is driven
+# by Board/Src/display.c and the WM8994 codec / SAI by Board/Src/audio_out.c.
 file(GLOB BSP_SOURCES "Drivers/BSP/STM32F769I-Discovery/*.c")
 
 set(BSP_COMPONENT_SOURCES
@@ -87,13 +89,12 @@ set(BSP_COMPONENT_SOURCES
   Drivers/BSP/Components/wm8994/wm8994.c
 )
 
-file(GLOB CORE_SOURCES "Core/Src/*.c" "Core/Src/*.cpp")
-
 set(FATFS_SOURCES
   FATFS/diskio.c
   FATFS/ff.c
   FATFS/ffsystem.c
   FATFS/ffunicode.c
+  FATFS/ff_readonly.c
 )
 
 set(FREERTOS_SOURCES
@@ -108,62 +109,31 @@ set(FREERTOS_SOURCES
   FREERTOS/portable/port.c
 )
 
-file(GLOB STEMWIN_SOURCES
-  "STemWin/Config/*.c"
-  "STemWin/GUI_X/*.c"
-  "STemWin/STemWinTask/*.c"
+file(GLOB APP_SOURCES CONFIGURE_DEPENDS
+  "Core/Src/*.c"
+  "Board/Src/*.c"
+  "App/Src/*.c"
 )
 
 add_executable(${PROJECT_NAME}
   startup/startup_stm32f769xx.s
-  ${CORE_SOURCES}
+  ${APP_SOURCES}
   ${HAL_SOURCES}
   ${BSP_SOURCES}
   ${BSP_COMPONENT_SOURCES}
   ${FATFS_SOURCES}
   ${FREERTOS_SOURCES}
-  ${STEMWIN_SOURCES}
-)
-
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-  USE_HAL_DRIVER
-  STM32F769xx
-  USE_STM32F769I_DISCO
-  $<$<CONFIG:Debug>:DEBUG>
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
-  Core/Inc
-  Drivers/STM32F7xx_HAL_Driver/Inc
-  Drivers/STM32F7xx_HAL_Driver/Inc/Legacy
-  Drivers/CMSIS/Device/ST/STM32F7xx/Include
-  Drivers/CMSIS/Include
-  Drivers/BSP/STM32F769I-Discovery
-  Drivers/BSP/Components/Common
-  FATFS
-  FREERTOS/include
-  FREERTOS/portable
-  STemWin/Include
-  STemWin/Config
-  STemWin/STemWinTask
-  STemWin/STemWin_Addons
-  Utilities/Fonts
+  Board/Inc
+  App/Inc
 )
 
-target_compile_options(${PROJECT_NAME} PRIVATE
-  ${MCU_FLAGS}
-  -ffunction-sections
-  -fdata-sections
-  -Wall
-  $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit>
-  $<$<COMPILE_LANGUAGE:ASM>:-x assembler-with-cpp>
-  $<$<CONFIG:Debug>:-Og -g3>
-  $<$<CONFIG:Release>:-O2 -g>
-  $<$<CONFIG:MinSizeRel>:-Os -g>
-)
+# Warnings for our own code
+set_source_files_properties(${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter")
 
 target_link_options(${PROJECT_NAME} PRIVATE
-  ${MCU_FLAGS}
   -T${LINKER_SCRIPT}
   --specs=nano.specs
   --specs=nosys.specs
@@ -174,14 +144,7 @@ target_link_options(${PROJECT_NAME} PRIVATE
 )
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_DEPENDS "${LINKER_SCRIPT}")
 
-# Add-ons depend on the core library, so they come first on the link line
-if(STEMWIN_ADDONS_LIB)
-  target_link_libraries(${PROJECT_NAME} PRIVATE "${STEMWIN_ADDONS_LIB}")
-endif()
-if(STEMWIN_LIB)
-  target_link_libraries(${PROJECT_NAME} PRIVATE "${STEMWIN_LIB}")
-endif()
-target_link_libraries(${PROJECT_NAME} PRIVATE m)
+target_link_libraries(${PROJECT_NAME} PRIVATE board_config lvgl m)
 
 # ---------------------------------------------------------------------------
 # Post-build: .hex / .bin and size report
