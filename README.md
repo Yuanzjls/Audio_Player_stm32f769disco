@@ -7,6 +7,9 @@ language (e.g. Chinese) are drawn with a TrueType font loaded from the SD card.
 
 Supported files: PCM WAV, 16-bit, mono or stereo, at 8 / 11.025 / 16 / 22.05 / 32 / 44.1 / 48 / 96 kHz.
 
+Hardware: STM32F769I-Discovery with the OTM8009A display (MB1166 revisions up to A-08). Later
+revisions ship an NT35510 panel, which the display driver does not support yet.
+
 ## SD card
 
 ```
@@ -16,15 +19,21 @@ Supported files: PCM WAV, 16-bit, mono or stereo, at 8 / 11.025 / 16 / 22.05 / 3
                   Without it only Latin titles render.
 ```
 
+Only distribute fonts whose license allows it; e.g. Microsoft YaHei comes with Windows and is
+fine on your own board, but must not be committed to this repository.
+
 ## Build (CMake)
 
 Requirements: CMake ≥ 3.20, Ninja, [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) (`arm-none-eabi-gcc` on PATH).
 On Windows: `winget install Kitware.CMake Ninja-build.Ninja Arm.GnuArmEmbeddedToolchain xpack-dev-tools.openocd-xpack`
 
-LVGL, FreeRTOS and the ST drivers are git submodules:
+LVGL, FreeRTOS and the ST drivers are git submodules, so clone recursively:
 
 ```sh
+git clone --recursive https://github.com/Yuanzjls/Audio_Player_stm32f769disco.git
+# or, in an existing clone:
 git submodule update --init
+
 cmake --preset Debug          # or Release
 cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.hex/.bin
 ```
@@ -59,6 +68,21 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 
 Tasks: `player` (priority 3) streams audio; `gui` (priority 1) runs LVGL. The UI only talks to the
 player through `player_*()` commands and reads a status snapshot, so the two never share state directly.
+
+## How it runs
+
+Everything is interrupt / DMA driven, so the CPU sleeps (`WFI` in the FreeRTOS idle hook) whenever
+there is nothing to do:
+
+| Part | Mechanism |
+|---|---|
+| Audio | SAI1 circular DMA; half/full-transfer interrupts wake the `player` task to refill a half from the SD card. Clocked from PLLI2S for the exact 44.1 kHz or 48 kHz family. |
+| SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA into cacheable SDRAM goes through an uncached bounce buffer. |
+| Display | DSI adapted command mode: on the panel's tearing-effect interrupt the finished LVGL frame (double-buffered in SDRAM) is sent in 4 tear-free stripes. Nothing is sent while the screen is unchanged. |
+| Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
+| Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
+
+Codec volume changes (a few I2C writes) and the UART log stay blocking: they are short and rare.
 
 ## Third-party components
 
