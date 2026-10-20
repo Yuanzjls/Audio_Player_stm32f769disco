@@ -19,6 +19,9 @@
 
 #define REFRESH_PERIOD_MS   100
 #define TITLE_FONT_SIZE     36
+#define SLIDER_HEIGHT       14
+#define SEEK_TOUCH_MARGIN   36      /* px around the bar that still grab it */
+#define VOLUME_TOUCH_MARGIN 28      /* smaller: the play button is just above */
 
 #define COLOR_BG        lv_color_hex(0xF4F6F9)
 #define COLOR_SURFACE   lv_color_hex(0xE2E6EC)
@@ -98,15 +101,20 @@ static lv_obj_t *make_round_button(lv_obj_t *parent, int32_t size, lv_color_t bg
   return btn;
 }
 
-static void style_slider(lv_obj_t *slider)
+/* A finger is much less precise than LVGL's default slider (an ~8 px bar with an
+ * 8 px touch margin): use a thicker bar, a bigger knob and a wide touch margin.
+ * Tapping anywhere in the margin jumps the knob there. */
+static void style_slider(lv_obj_t *slider, int32_t touch_margin)
 {
+  lv_obj_set_height(slider, SLIDER_HEIGHT);
+  lv_obj_set_ext_click_area(slider, touch_margin);
   lv_obj_set_style_bg_color(slider, COLOR_SURFACE, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(slider, COLOR_ACCENT, LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(slider, COLOR_ON_ACCENT, LV_PART_KNOB);
   lv_obj_set_style_border_color(slider, COLOR_ACCENT, LV_PART_KNOB);
   lv_obj_set_style_border_width(slider, 3, LV_PART_KNOB);
-  lv_obj_set_style_pad_all(slider, 6, LV_PART_KNOB);
+  lv_obj_set_style_pad_all(slider, 8, LV_PART_KNOB);
 }
 
 /* ---- event handlers -------------------------------------------------------- */
@@ -326,7 +334,7 @@ static void build_seek_bar(lv_obj_t *scr)
   lv_obj_set_width(s_ui.seek, 640);
   lv_obj_align(s_ui.seek, LV_ALIGN_TOP_MID, 0, 225);
   lv_slider_set_range(s_ui.seek, 0, 1);
-  style_slider(s_ui.seek);
+  style_slider(s_ui.seek, SEEK_TOUCH_MARGIN);
   lv_obj_add_event_cb(s_ui.seek, on_seek_event, LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_add_event_cb(s_ui.seek, on_seek_event, LV_EVENT_RELEASED, NULL);
 
@@ -362,8 +370,8 @@ static void build_volume(lv_obj_t *scr, uint8_t volume)
   lv_obj_set_width(s_ui.volume, 260);
   lv_slider_set_range(s_ui.volume, 0, 100);
   lv_slider_set_value(s_ui.volume, volume, LV_ANIM_OFF);
-  style_slider(s_ui.volume);
-  lv_obj_align(s_ui.volume, LV_ALIGN_BOTTOM_MID, 0, -36);
+  style_slider(s_ui.volume, VOLUME_TOUCH_MARGIN);
+  lv_obj_align(s_ui.volume, LV_ALIGN_BOTTOM_MID, 0, -42);
   lv_obj_add_event_cb(s_ui.volume, on_volume_event, LV_EVENT_VALUE_CHANGED, NULL);
   s_last_volume_sent = volume;
 

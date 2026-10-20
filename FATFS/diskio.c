@@ -13,6 +13,7 @@
 #include "stm32f769i_discovery_sd.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 
 /* Physical drive number of the SD card */
 #define DEV_MMC		0
@@ -86,11 +87,27 @@ DSTATUS disk_initialize (
 /* Read Sector(s)                                                        */
 /*-----------------------------------------------------------------------*/
 
+/* After a transfer the card is usually ready at once; otherwise sleep 1 ms
+ * between checks instead of spinning. Returns 0 when ready, -1 on timeout. */
+static int wait_card_ready(void)
+{
+	const TickType_t start = xTaskGetTickCount();
+
+	while (BSP_SD_GetCardState() != MSD_OK)
+	{
+		if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(SD_TIMEOUT))
+		{
+			return -1;
+		}
+		vTaskDelay(1);
+	}
+	return 0;
+}
+
 /* DMA read into a buffer that is safe for DMA */
 static DRESULT read_blocks_dma(BYTE *buff, LBA_t sector, UINT count)
 {
 	DRESULT res = RES_ERROR;
-	uint32_t timer;
 
 	if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
 	(uint32_t) (sector),
@@ -99,14 +116,9 @@ static DRESULT read_blocks_dma(BYTE *buff, LBA_t sector, UINT count)
 		/* Wait for BSP_SD_ReadCpltCallback() */
 		if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
 		{
-			timer = xTaskGetTickCount() + SD_TIMEOUT;
-			while(timer > xTaskGetTickCount())
+			if (wait_card_ready() == 0)
 			{
-				if (BSP_SD_GetCardState()== MSD_OK)
-				{
-					res = RES_OK;
-					break;
-				}
+				res = RES_OK;
 			}
 		}
 	}
@@ -172,11 +184,10 @@ DRESULT disk_write (
 		/* Wait for BSP_SD_WriteCpltCallback() */
 		if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
 		{
-			while(BSP_SD_GetCardState()!= MSD_OK)
+			if (wait_card_ready() == 0)
 			{
-				;
+				res = RES_OK;
 			}
-			res = RES_OK;
 		}
 	}
 

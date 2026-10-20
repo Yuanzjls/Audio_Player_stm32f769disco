@@ -11,6 +11,7 @@
 
 #include "audio_out.h"
 #include "display.h"
+#include "touch.h"
 
 /* Provided by the FreeRTOS port (port.c) */
 extern void xPortSysTickHandler(void);
@@ -87,4 +88,10 @@ void SDMMC2_IRQHandler(void)
 void DSI_IRQHandler(void)
 {
   display_dsi_irq_handler();
+}
+
+/* Touch controller INT (PI13) */
+void EXTI15_10_IRQHandler(void)
+{
+  touch_irq_handler();
 }
