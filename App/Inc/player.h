@@ -2,7 +2,7 @@
  * @file  player.h
  * @brief WAV playlist player running in its own task.
  *
- * Plays the *.wav files of /Music on the SD card in directory order.
+ * Plays the *.wav files of /Music on the SD card, sorted by name.
  * Control functions are thread safe: they queue a command for the player
  * task and return immediately. The UI polls player_get_status().
  */
@@ -10,6 +10,7 @@
 #define PLAYER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -18,6 +19,7 @@ extern "C" {
 
 #define PLAYER_MUSIC_DIR   "/Music"
 #define PLAYER_TITLE_MAX   256   /* bytes, UTF-8, including terminator */
+#define PLAYER_MAX_TRACKS  512   /* library size limit (names cached in SDRAM) */
 #define PLAYER_MESSAGE_MAX 64
 
 typedef enum
@@ -47,18 +49,30 @@ typedef struct
   uint32_t        sample_rate;
   uint8_t         channels;
   uint32_t        track_serial;  /**< changes whenever a new track is loaded */
+  uint32_t        library_serial;/**< changes whenever the track list is (re)read */
   char            title[PLAYER_TITLE_MAX];
   char            message[PLAYER_MESSAGE_MAX]; /**< error / hint for the user, may be empty */
 } player_status_t;
 
-/** Create the player task. It mounts the SD card and starts playing. */
+/** Create the player task. It mounts the SD card and starts playing once
+ *  player_ui_ready() has been called. */
 void player_start(uint8_t initial_volume);
+
+/** Tell the player the screen is up: playback starts only after this. */
+void player_ui_ready(void);
 
 /** Copy the current status (thread safe). */
 void player_get_status(player_status_t *status);
 
 void player_toggle_play(void);
 void player_next(void);
+/** Previous track, or back to the start of the current one if past 3 s. */
+void player_prev(void);
+/** Play track @p index of the library (0-based). */
+void player_play_track(uint16_t index);
+
+/** Copy the display name (file name without .wav) of library entry @p index. */
+bool player_get_track_name(uint16_t index, char *name, size_t len);
 void player_seek(uint32_t position_s);
 void player_set_volume(uint8_t volume);
 void player_set_repeat(player_repeat_t repeat);

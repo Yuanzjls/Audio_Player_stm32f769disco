@@ -102,6 +102,10 @@ static void gui_task(void *arg)
   }
   ui_init();
 
+  /* Draw the first frame now, then let the music start */
+  lv_refr_now(NULL);
+  player_ui_ready();
+
   for (;;)
   {
     touch_process();

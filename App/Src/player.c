@@ -15,6 +15,7 @@
 #include "player.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -39,6 +40,10 @@
 #define NOTIFY_HALF_DONE   (1UL << 0)
 #define NOTIFY_FULL_DONE   (1UL << 1)
 #define NOTIFY_COMMAND     (1UL << 2)
+#define NOTIFY_UI_READY    (1UL << 3)
+
+/* Start playing even without the UI signal after this long (display failure) */
+#define UI_READY_TIMEOUT_MS 5000
 
 #define IDLE_POLL_MS       100
 #define CARD_RETRY_MS      1000
@@ -47,6 +52,8 @@ typedef enum
 {
   CMD_TOGGLE_PLAY,
   CMD_NEXT,
+  CMD_PREV,
+  CMD_PLAY_INDEX,
   CMD_SEEK,
   CMD_SET_VOLUME,
   CMD_SET_REPEAT,
@@ -76,6 +83,15 @@ static player_status_t   s_status;      /* guarded by s_status_mutex */
 static FATFS   s_fs;
 static track_t s_track;
 static uint32_t s_output_rate;          /* rate the output is configured for, 0 = none */
+
+/* Restart the current track instead of going back when past this position */
+#define PREV_RESTART_AFTER_S  3U
+
+static uint16_t track_count(void);
+
+/* Library: file names of the playable tracks, sorted. Written once by the
+ * player task (scan_library) before track_count is published, read-only after. */
+static char s_names[PLAYER_MAX_TRACKS][PLAYER_TITLE_MAX] __attribute__((section(".sdram")));
 
 /* DMA buffer: both halves. Lives in SRAM that the MPU maps non-cacheable. */
 static int16_t s_audio_buf[2 * HALF_SAMPLES] __attribute__((aligned(32)));
@@ -125,8 +141,13 @@ static bool is_wav_name(const char *name)
   return len > 4U && strcasecmp(&name[len - 4U], ".wav") == 0;
 }
 
-/* Call fn for each .wav in the music folder; stops when fn returns false. */
-static uint16_t for_each_track(bool (*fn)(uint16_t index, const FILINFO *info, void *ctx), void *ctx)
+static int compare_names(const void *a, const void *b)
+{
+  return strcasecmp((const char *)a, (const char *)b);
+}
+
+/* Read the music folder into s_names (sorted, case-insensitive). Returns the count. */
+static uint16_t scan_library(void)
 {
   DIR dir;
   FILINFO info;
@@ -142,34 +163,18 @@ static uint16_t for_each_track(bool (*fn)(uint16_t index, const FILINFO *info, v
     {
       continue;
     }
-    if (fn != NULL && !fn(count, &info, ctx))
+    if (count == PLAYER_MAX_TRACKS)
     {
-      count++;
+      LOG_WARN("player: more than %u tracks, the rest is ignored", (unsigned)PLAYER_MAX_TRACKS);
       break;
     }
+    snprintf(s_names[count], PLAYER_TITLE_MAX, "%s", info.fname);
     count++;
   }
   f_closedir(&dir);
+
+  qsort(s_names, count, PLAYER_TITLE_MAX, compare_names);
   return count;
-}
-
-typedef struct
-{
-  uint16_t wanted;
-  char    *name;
-  bool     found;
-} find_ctx_t;
-
-static bool find_track_cb(uint16_t index, const FILINFO *info, void *ctx)
-{
-  find_ctx_t *find = ctx;
-  if (index != find->wanted)
-  {
-    return true;
-  }
-  snprintf(find->name, PLAYER_TITLE_MAX, "%s", info->fname);
-  find->found = true;
-  return false;
 }
 
 static void close_track(void)
@@ -186,14 +191,13 @@ static bool open_track(uint16_t index)
 {
   char name[PLAYER_TITLE_MAX];
   char path[sizeof(PLAYER_MUSIC_DIR) + 1 + PLAYER_TITLE_MAX];
-  find_ctx_t find = { .wanted = index, .name = name, .found = false };
 
   close_track();
-  for_each_track(find_track_cb, &find);
-  if (!find.found)
+  if (index >= track_count())
   {
     return false;
   }
+  snprintf(name, sizeof(name), "%s", s_names[index]);
 
   snprintf(path, sizeof(path), "%s/%s", PLAYER_MUSIC_DIR, name);
   if (f_open(&s_track.file, path, FA_READ) != FR_OK)
@@ -418,6 +422,23 @@ static void on_track_finished(void)
 
 /* ---- commands -------------------------------------------------------------- */
 
+/* Switching tracks always ends up playing the new one */
+static void skip_to(uint16_t index, player_state_t state)
+{
+  if (state == PLAYER_STATE_PLAYING)
+  {
+    play_track(index);
+  }
+  else
+  {
+    stop_output();
+    if (open_playable_track(index, track_count()))
+    {
+      start_output();
+    }
+  }
+}
+
 static void seek(uint32_t position_s)
 {
   if (!s_track.open)
@@ -464,22 +485,37 @@ static void handle_command(const command_t *cmd)
       break;
 
     case CMD_NEXT:
-      /* Skipping always ends up playing the next track (wrapping to the first) */
       if (has_tracks)
       {
-        const uint16_t next = (uint16_t)((track_index() + 1U) % track_count());
-        if (state == PLAYER_STATE_PLAYING)
+        skip_to((uint16_t)((track_index() + 1U) % track_count()), state);
+      }
+      break;
+
+    case CMD_PREV:
+      if (has_tracks)
+      {
+        uint32_t position_s;
+        status_lock();
+        position_s = s_status.position_s;
+        status_unlock();
+
+        if (position_s >= PREV_RESTART_AFTER_S && state != PLAYER_STATE_STOPPED)
         {
-          play_track(next);
+          seek(0);
+          update_position();
         }
         else
         {
-          stop_output();
-          if (open_playable_track(next, track_count()))
-          {
-            start_output();
-          }
+          const uint16_t count = track_count();
+          skip_to((uint16_t)((track_index() + count - 1U) % count), state);
         }
+      }
+      break;
+
+    case CMD_PLAY_INDEX:
+      if (has_tracks && cmd->value < track_count())
+      {
+        skip_to((uint16_t)cmd->value, state);
       }
       break;
 
@@ -529,14 +565,17 @@ static void mount_card_and_scan(void)
   {
     if (f_mount(&s_fs, "", 1) == FR_OK)
     {
-      const uint16_t count = for_each_track(NULL, NULL);
+      const uint16_t count = scan_library();
       status_lock();
       s_status.track_count = count;
+      s_status.library_serial++;
       status_unlock();
 
       if (count > 0U)
       {
         LOG_INFO("player: %u track(s) in %s", (unsigned)count, PLAYER_MUSIC_DIR);
+        /* Card and library are ready (the UI can load fonts and the list) */
+        set_state(PLAYER_STATE_STOPPED, NULL);
         return;
       }
       set_state(PLAYER_STATE_NO_TRACKS, "No .wav files in /Music");
@@ -559,11 +598,36 @@ static void mount_card_and_scan(void)
   }
 }
 
+/* Block until the GUI has drawn its first frame (or the timeout expires).
+ * Only the UI-ready bit is consumed; other pending events are kept. */
+static void wait_for_ui(void)
+{
+  const TickType_t start = xTaskGetTickCount();
+  const TickType_t limit = pdMS_TO_TICKS(UI_READY_TIMEOUT_MS);
+
+  for (;;)
+  {
+    const TickType_t elapsed = xTaskGetTickCount() - start;
+    if (elapsed >= limit)
+    {
+      LOG_WARN("player: UI not ready after %u ms, starting anyway", (unsigned)UI_READY_TIMEOUT_MS);
+      return;
+    }
+    uint32_t events = 0;
+    if (xTaskNotifyWait(0, NOTIFY_UI_READY, &events, limit - elapsed) == pdTRUE &&
+        (events & NOTIFY_UI_READY) != 0U)
+    {
+      return;
+    }
+  }
+}
+
 static void player_task(void *arg)
 {
   (void)arg;
 
   mount_card_and_scan();
+  wait_for_ui();
 
   if (open_playable_track(0, track_count()))
   {
@@ -630,8 +694,31 @@ void player_get_status(player_status_t *status)
   status_unlock();
 }
 
+void player_ui_ready(void)
+{
+  xTaskNotify(s_task, NOTIFY_UI_READY, eSetBits);
+}
+
 void player_toggle_play(void)               { send_command(CMD_TOGGLE_PLAY, 0); }
 void player_next(void)                      { send_command(CMD_NEXT, 0); }
+void player_prev(void)                      { send_command(CMD_PREV, 0); }
+void player_play_track(uint16_t index)      { send_command(CMD_PLAY_INDEX, index); }
+
+bool player_get_track_name(uint16_t index, char *name, size_t len)
+{
+  bool ok = false;
+
+  status_lock();
+  if (index < s_status.track_count && len > 0U)
+  {
+    /* File name without the .wav extension */
+    const size_t n = strlen(s_names[index]) - 4U;
+    snprintf(name, len, "%.*s", (int)n, s_names[index]);
+    ok = true;
+  }
+  status_unlock();
+  return ok;
+}
 void player_seek(uint32_t position_s)       { send_command(CMD_SEEK, position_s); }
 void player_set_repeat(player_repeat_t r)   { send_command(CMD_SET_REPEAT, (uint32_t)r); }
 
