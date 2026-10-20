@@ -21,7 +21,7 @@ Supported files: PCM WAV, 16-bit, mono or stereo, at 8 / 11.025 / 16 / 22.05 / 3
 Requirements: CMake ≥ 3.20, Ninja, [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) (`arm-none-eabi-gcc` on PATH).
 On Windows: `winget install Kitware.CMake Ninja-build.Ninja Arm.GnuArmEmbeddedToolchain xpack-dev-tools.openocd-xpack`
 
-LVGL is a git submodule:
+LVGL, FreeRTOS and the ST drivers are git submodules:
 
 ```sh
 git submodule update --init
@@ -53,11 +53,28 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 | `App/` | `player` (playlist + streaming task, command queue), `wav` (RIFF parser), `ui` (LVGL screen) |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
-| `Middlewares/lvgl` | LVGL 9.6 (submodule) |
-| `Drivers/`, `FATFS/`, `FREERTOS/` | ST HAL/BSP, FatFs (with the SD-card glue in `FATFS/diskio.c`), FreeRTOS kernel |
+| `Middlewares/` | LVGL and the FreeRTOS kernel (submodules) |
+| `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied) |
+| `FATFS/` | FatFs, with the SD-card glue in `diskio.c` and the settings in `ffconf.h` |
 
 Tasks: `player` (priority 3) streams audio; `gui` (priority 1) runs LVGL. The UI only talks to the
 player through `player_*()` commands and reads a status snapshot, so the two never share state directly.
+
+## Third-party components
+
+| Component | Version | Source |
+|---|---|---|
+| LVGL | 9.6.0 | submodule `Middlewares/lvgl` |
+| FreeRTOS kernel | V11.3.1 | submodule `Middlewares/FreeRTOS-Kernel` (port `GCC/ARM_CM4F`) |
+| STM32F7 HAL | v1.3.3 | submodule `Drivers/STM32F7xx_HAL_Driver` |
+| CMSIS device F7 | v1.2.10 | submodule `Drivers/CMSIS/Device/ST/STM32F7xx` (startup + system files) |
+| CMSIS Core | 5.9.0 (Core 5.6) | copied into `Drivers/CMSIS/Include` |
+| 32F769I-Discovery BSP | v2.2.1 | submodule `Drivers/BSP/STM32F769I-Discovery` |
+| BSP components | common v4.0.1, wm8994 v2.2.1, otm8009a v1.0.7, nt35510 v1.0.3, ft6x06 v1.0.2, adv7533 v1.0.2 | submodules `Drivers/BSP/Components/*` |
+| FatFs | R0.16 | copied into `FATFS/` |
+
+The ST driver versions are the set pinned by STM32CubeF7 v1.17.4. Newer major releases of
+the chip drivers (wm8994 v3, otm8009a v2, ...) use a different API and do not fit this BSP.
 
 ## Demo video
 

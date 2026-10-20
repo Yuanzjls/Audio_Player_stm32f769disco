@@ -5,6 +5,8 @@
 /* references f_write(), so provide one that refuses every write.         */
 /*-----------------------------------------------------------------------*/
 
+#include <stddef.h>
+
 #include "ff.h"
 
 #if FF_FS_READONLY
