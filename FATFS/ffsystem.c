@@ -103,7 +103,7 @@ int ff_del_syncobj (	/* 1:Function succeeded, 0:Could not delete due to an error
 
 	/* FreeRTOS */
   vSemaphoreDelete(sobj);
-//	return 1;
+	return 1;
 
 	/* CMSIS-RTOS */
 //	return (int)(osMutexDelete(sobj) == osOK);

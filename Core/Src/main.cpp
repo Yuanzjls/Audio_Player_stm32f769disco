@@ -7,15 +7,12 @@
 #include <string.h>
 #include <ff.h>
 #include <stm32f769i_discovery_audio.h>
-#include "GifDecoder.h"
 #include "wavdecoder.h"
 #include <stdio.h>
 #include "GUI.h"
 #include <WM.h>
 #include <stm32f769i_discovery_ts.h>
 #include <MainTask.h>
-
-//#include "MainTask.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -36,84 +33,29 @@
 
 /* Private variables ---------------------------------------------------------*/
 
-extern LTDC_HandleTypeDef hltdc_discovery;
-static DMA2D_HandleTypeDef   hdma2d;
-extern DSI_HandleTypeDef hdsi_discovery;
-DMA2D_HandleTypeDef Dma2dHandle;
-DSI_VidCfgTypeDef hdsivideo_handle;
-DSI_CmdCfgTypeDef CmdCfg;
-DSI_LPCmdTypeDef LPCmd;
-DSI_PLLInitTypeDef dsiPllInit;
 SAI_HandleTypeDef SaiHandle;
 DMA_HandleTypeDef            hSaiDma;
-
-#define JPEG_SOI_MARKER (0xFFD8) /* JPEG Start Of Image marker*/
-#define JPEG_SOI_MARKER_BYTE0 (JPEG_SOI_MARKER & 0xFF)
-#define JPEG_SOI_MARKER_BYTE1 ((JPEG_SOI_MARKER >> 8) & 0xFF)
-/*JPEG Related variable
- */
-static JPEG_HandleTypeDef     JPEG_Handle;
-static JPEG_ConfTypeDef       JPEG_Info;
-extern __IO uint32_t Previous_FrameSize;
-
-
-#define MP3_HEADER_SIZE_POSITION  0x06
-
-/* Private macro -------------------------------------------------------------*/
-/* Private variables ---------------------------------------------------------*/
-
-
 
 RTC_HandleTypeDef hrtc;
 UART_HandleTypeDef UartHandle;
 DMA_HandleTypeDef DMAUartHandle;
-FIL JPEG_File;  /* File object */
 Wavheader Wheader;
 extern uint8_t volume;
-/* USER CODE BEGIN PV */
-/*GIF Decode Varible part*/
-
-/* template parameters are maxGifWidth, maxGifHeight, lzwMaxBits
- *
- * The lzwMaxBits value of 12 supports all GIFs, but uses 16kB RAM
- * lzwMaxBits can be set to 10 or 11 for smaller displays to save RAM, but use 12 for large displays
- * All 32x32-pixel GIFs tested so far work with 11, most work with 10
- */
-const uint16_t kMatrixWidth = 800;        // known working: 32, 64, 96, 128
-const uint16_t kMatrixHeight = 480;       // known working: 16, 32, 48, 64
-//GifDecoder<kMatrixWidth, kMatrixHeight, 12> decoder((uint8_t *)GIFIMAGE_ADDRESS, (uint8_t *)GIFIMAGEBU_ADDRESS);
-
-/* USER CODE END PV */
-
-
 
 /* Private function prototypes -----------------------------------------------*/
  void SystemClock_Config(void);
 static void MX_RTC_Init(void);
-static void CopyPicture(uint32_t *pSrc,
-                           uint32_t *pDst,
-                           uint16_t x,
-                           uint16_t y,
-                           uint16_t xsize,
-                           uint16_t ysize);
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName )
 {
-	xTaskHandle *bad_task_handle;
-	signed char *bad_task_name;
-
-    bad_task_handle = pxTask;     // this seems to give me the crashed task handle
-    bad_task_name = pcTaskName;     // this seems to give me a pointer to the name of the crashed task
-    //mLED_3_On();   // a LED is lit when the task has crashed
+    /* pxTask / pcTaskName identify the offending task: inspect them in the debugger */
+    (void)pxTask;
+    (void)pcTaskName;
     taskDISABLE_INTERRUPTS();
     for( ;; );
-    taskEXIT_CRITICAL();
 }
-
-
-
 
 
 AUDIO_DrvTypeDef *audio_drv;
@@ -189,37 +131,9 @@ static void Playback_Init(uint32_t SampleRate)
 
 FIL fi;
 
-/*gif call back functions start */
-void screenClearCallback(void)
-{
-	BSP_LCD_Clear(LCD_COLOR_BLACK);
-}
-#if 0
-void updateScreenCallback(void)
-{
-	uint32_t xPos = (BSP_LCD_GetXSize() - decoder.GetGifWidth())/2;
-	uint32_t yPos = (BSP_LCD_GetYSize() - decoder.GetGifHeight())/2;
-	CopyPicture((uint32_t *)IMAGEBUFF_ADDRESS, (uint32_t *)LAYER1_ADDRESS, xPos, yPos, decoder.GetGifWidth(), decoder.GetGifHeight());
-}
-void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t blue)
-{
-	*((uint32_t*)(IMAGEBUFF_ADDRESS+(x+y* (decoder.GetGifWidth()))*4)) = ((uint16_t)red << 16) | ((uint16_t)green << 8) | (blue);
-}
-#endif
-
-/*gif call back functions end */
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-uint32_t FrameOffset=0;
 const uint16_t block_size = 36864;
 uint16_t buff[block_size];
 #define PLAY_HEADER          0x2C
-bool flag = 0;
-uint8_t temp_data[100];
 TaskHandle_t xTaskVolume = NULL;
 TaskHandle_t xTaskMusic = NULL;
 static TaskHandle_t xTaskGUI = NULL;
@@ -242,7 +156,6 @@ static void vTaskVolume(void *pvParameters)
 
 	  }
 	  BSP_LED_Toggle(LED2);
-    //vTaskDelay(400);
   }
 }
 
@@ -278,16 +191,6 @@ static void vTaskTouchEx(void *pvParameters)
 
 	}
 }
-unsigned int RetrieveMP3Data(void * pMP3CompressedData,
-unsigned int nMP3DataSizeInChars,
-void * token)
-{
-	UINT nData_Read;
-
-	f_read((FIL*)token, pMP3CompressedData, nMP3DataSizeInChars, &nData_Read);
-	return nData_Read;
-}
-
 AudioTime Total_AudioTime;
 extern char time_char[18];
 WM_HWIN xhWin;
@@ -528,13 +431,6 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
   /* USER CODE END 1 */
-	
-
-	uint8_t SD_state = MSD_OK, res;
-
-	
-	uint32_t AlphaInvertConfig;
-
 
 	MPU_Config();
 	SCB_InvalidateICache();
@@ -570,16 +466,8 @@ int main(void)
   /* Enable the CRC Module */
   __HAL_RCC_CRC_CLK_ENABLE();
 	  MX_RTC_Init();
-	  //MPU_Config();
 
-
-	  /*##-1- JPEG Initialization ################################################*/
-	  /* Init The JPEG Color Look Up Tables used for YCbCr to RGB conversion   */
-
-	  /* Init the HAL JPEG driver */
-	   //JPEG_Handle.Instance = JPEG;
-
-
+	   /* USART1 (ST-LINK virtual COM port) with DMA TX, used by printf via _write() in syscalls.c */
 	   DMAUartHandle.Instance				  = DMA2_Stream7;
 	   DMAUartHandle.Init.Channel             = DMA_CHANNEL_4;
 	   DMAUartHandle.Init.Direction           = DMA_MEMORY_TO_PERIPH;
@@ -615,7 +503,6 @@ int main(void)
 	    HAL_NVIC_EnableIRQ(USART1_IRQn);
 
   /* USER CODE BEGIN 2 */
-	   // gif decode callback function set
 	    /* Initializes the SDRAM device */
 	    BSP_SDRAM_Init();
 		BSP_SD_Init();
@@ -853,10 +740,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef *hsai)
 
 void BSP_AUDIO_OUT_TransferComplete_CallBack()
 {
-	//unsigned int len;
-  /* Manage the remaining file size and new address offset: This function
-     should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
-	//f_read(&fi, &buff[block_size/2], block_size, &len);
+  /* Second half of buff[] has been sent: let vTaskMusic refill it */
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     /* Notify the task that the transmission is complete. */
@@ -882,10 +766,7 @@ void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai)
   */
 void BSP_AUDIO_OUT_HalfTransfer_CallBack()
 {
-  //unsigned int len;
-  /* Manage the remaining file size and new address offset: This function
-     should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
-	//f_read(&fi, &buff[0], block_size, &len);
+  /* First half of buff[] has been sent: let vTaskMusic refill it */
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   /* Notify the task that the transmission is complete. */
