@@ -125,7 +125,7 @@ static const GUI_WIDGET_CREATE_INFO _aDialogCreate[] = {
 
 static int _cbGetData(U32 Off, U16 NumBytes, void * pVoid, void * pBuffer) {
   //FIL hFile;
-  DWORD  NumBytesRead;
+  UINT   NumBytesRead;
 
   //hFile = *(FIL *)pVoid;
   //
@@ -423,7 +423,7 @@ WM_HWIN CreateFramewin(void) {
   hWin = GUI_CreateDialogBox(_aDialogCreate, GUI_COUNTOF(_aDialogCreate), _cbDialog, WM_HBKWIN, 0, 0);
   return hWin;
 }
-WM_HWIN xhWin;
+extern WM_HWIN xhWin;   /* defined in main.cpp */
 // USER START (Optionally insert additional public code)
 
 void YaHeiFont_Init(void)
