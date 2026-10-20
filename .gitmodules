@@ -1,0 +1,33 @@
+[submodule "Middlewares/lvgl"]
+	path = Middlewares/lvgl
+	url = https://github.com/lvgl/lvgl.git
+[submodule "Middlewares/FreeRTOS-Kernel"]
+	path = Middlewares/FreeRTOS-Kernel
+	url = https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+[submodule "Drivers/STM32F7xx_HAL_Driver"]
+	path = Drivers/STM32F7xx_HAL_Driver
+	url = https://github.com/STMicroelectronics/stm32f7xx_hal_driver.git
+[submodule "Drivers/CMSIS/Device/ST/STM32F7xx"]
+	path = Drivers/CMSIS/Device/ST/STM32F7xx
+	url = https://github.com/STMicroelectronics/cmsis_device_f7.git
+[submodule "Drivers/BSP/STM32F769I-Discovery"]
+	path = Drivers/BSP/STM32F769I-Discovery
+	url = https://github.com/STMicroelectronics/32f769idiscovery-bsp.git
+[submodule "Drivers/BSP/Components/Common"]
+	path = Drivers/BSP/Components/Common
+	url = https://github.com/STMicroelectronics/stm32-bsp-common.git
+[submodule "Drivers/BSP/Components/wm8994"]
+	path = Drivers/BSP/Components/wm8994
+	url = https://github.com/STMicroelectronics/stm32-wm8994.git
+[submodule "Drivers/BSP/Components/otm8009a"]
+	path = Drivers/BSP/Components/otm8009a
+	url = https://github.com/STMicroelectronics/stm32-otm8009a.git
+[submodule "Drivers/BSP/Components/ft6x06"]
+	path = Drivers/BSP/Components/ft6x06
+	url = https://github.com/STMicroelectronics/stm32-ft6x06.git
+[submodule "Drivers/BSP/Components/adv7533"]
+	path = Drivers/BSP/Components/adv7533
+	url = https://github.com/STMicroelectronics/stm32-adv7533.git
+[submodule "Drivers/BSP/Components/nt35510"]
+	path = Drivers/BSP/Components/nt35510
+	url = https://github.com/STMicroelectronics/stm32-nt35510.git

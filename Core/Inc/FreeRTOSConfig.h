@@ -44,7 +44,7 @@
 #define configUSE_PREEMPTION					1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION	1
 #define configUSE_QUEUE_SETS					1
-#define configUSE_IDLE_HOOK						0
+#define configUSE_IDLE_HOOK						1
 #define configUSE_TICK_HOOK						0
 #define configCPU_CLOCK_HZ						( SystemCoreClock )
 #define configTICK_RATE_HZ						( 1000 )
@@ -53,13 +53,13 @@
 #define configTOTAL_HEAP_SIZE					( ( size_t ) ( 200 * 1024 ) )
 #define configMAX_TASK_NAME_LEN					( 10 )
 #define configUSE_TRACE_FACILITY				1
-#define configUSE_16_BIT_TICKS					0
+#define configTICK_TYPE_WIDTH_IN_BITS					TICK_TYPE_WIDTH_32_BITS
 #define configIDLE_SHOULD_YIELD					1
 #define configUSE_MUTEXES						1
 #define configQUEUE_REGISTRY_SIZE				8
 #define configCHECK_FOR_STACK_OVERFLOW			2
 #define configUSE_RECURSIVE_MUTEXES				1
-#define configUSE_MALLOC_FAILED_HOOK			0
+#define configUSE_MALLOC_FAILED_HOOK			1
 #define configUSE_APPLICATION_TASK_TAG			0
 #define configUSE_COUNTING_SEMAPHORES			1
 
@@ -141,10 +141,9 @@ files. */
 
 	extern uint32_t SystemCoreClock;
 
-	/* Normal assert() semantics without relying on the provision of an assert.h
-	header file. */
+	/* Assertion failures halt in vAssertCalled() (main.c) with the location recorded */
 	extern void vAssertCalled( uint32_t ulLine, const char *pcFile );
-	#define configASSERT( x ) if( ( x ) == 0 ) { taskDISABLE_INTERRUPTS(); for( ;; ); taskEXIT_CRITICAL();}
+	#define configASSERT( x ) if( ( x ) == 0 ) { vAssertCalled( __LINE__, __FILE__ ); }
 
 #endif /* __IAR_SYSTEMS_ASM__ */
 

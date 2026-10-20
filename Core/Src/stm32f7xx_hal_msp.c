@@ -98,59 +98,6 @@ void HAL_MspInit(void)
 }
 
 /**
-* @brief DMA2D MSP Initialization
-* This function configures the hardware resources used in this example
-* @param hdma2d: DMA2D handle pointer
-* @retval None
-*/
-void HAL_DMA2D_MspInit(DMA2D_HandleTypeDef* hdma2d)
-{
-
-  if(hdma2d->Instance==DMA2D)
-  {
-  /* USER CODE BEGIN DMA2D_MspInit 0 */
-
-  /* USER CODE END DMA2D_MspInit 0 */
-    /* Peripheral clock enable */
-    __HAL_RCC_DMA2D_CLK_ENABLE();
-    /* DMA2D interrupt Init */
-    HAL_NVIC_SetPriority(DMA2D_IRQn, 3, 0);
-    HAL_NVIC_EnableIRQ(DMA2D_IRQn);
-  /* USER CODE BEGIN DMA2D_MspInit 1 */
-
-  /* USER CODE END DMA2D_MspInit 1 */
-  }
-
-}
-
-/**
-* @brief DMA2D MSP De-Initialization
-* This function freeze the hardware resources used in this example
-* @param hdma2d: DMA2D handle pointer
-* @retval None
-*/
-
-void HAL_DMA2D_MspDeInit(DMA2D_HandleTypeDef* hdma2d)
-{
-
-  if(hdma2d->Instance==DMA2D)
-  {
-  /* USER CODE BEGIN DMA2D_MspDeInit 0 */
-
-  /* USER CODE END DMA2D_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_DMA2D_CLK_DISABLE();
-
-    /* DMA2D interrupt DeInit */
-    HAL_NVIC_DisableIRQ(DMA2D_IRQn);
-  /* USER CODE BEGIN DMA2D_MspDeInit 1 */
-
-  /* USER CODE END DMA2D_MspDeInit 1 */
-  }
-
-}
-
-/**
 * @brief DSI MSP Initialization
 * This function configures the hardware resources used in this example
 * @param hdsi: DSI handle pointer
@@ -217,11 +164,9 @@ void HAL_LTDC_MspInit(LTDC_HandleTypeDef* hltdc)
   /* USER CODE BEGIN LTDC_MspInit 0 */
 
   /* USER CODE END LTDC_MspInit 0 */
-    /* Peripheral clock enable */
+    /* Peripheral clock enable (LTDC interrupts are not used: the DSI host
+       signals tearing effect / end of refresh) */
     __HAL_RCC_LTDC_CLK_ENABLE();
-    /* LTDC interrupt Init */
-    HAL_NVIC_SetPriority(LTDC_IRQn, 3, 0);
-    HAL_NVIC_EnableIRQ(LTDC_IRQn);
   /* USER CODE BEGIN LTDC_MspInit 1 */
 
   /* USER CODE END LTDC_MspInit 1 */
@@ -246,59 +191,9 @@ void HAL_LTDC_MspDeInit(LTDC_HandleTypeDef* hltdc)
   /* USER CODE END LTDC_MspDeInit 0 */
     /* Peripheral clock disable */
     __HAL_RCC_LTDC_CLK_DISABLE();
-
-    /* LTDC interrupt DeInit */
-    HAL_NVIC_DisableIRQ(LTDC_IRQn);
   /* USER CODE BEGIN LTDC_MspDeInit 1 */
 
   /* USER CODE END LTDC_MspDeInit 1 */
-  }
-
-}
-
-/**
-* @brief RTC MSP Initialization
-* This function configures the hardware resources used in this example
-* @param hrtc: RTC handle pointer
-* @retval None
-*/
-void HAL_RTC_MspInit(RTC_HandleTypeDef* hrtc)
-{
-
-  if(hrtc->Instance==RTC)
-  {
-  /* USER CODE BEGIN RTC_MspInit 0 */
-
-  /* USER CODE END RTC_MspInit 0 */
-    /* Peripheral clock enable */
-    __HAL_RCC_RTC_ENABLE();
-  /* USER CODE BEGIN RTC_MspInit 1 */
-
-  /* USER CODE END RTC_MspInit 1 */
-  }
-
-}
-
-/**
-* @brief RTC MSP De-Initialization
-* This function freeze the hardware resources used in this example
-* @param hrtc: RTC handle pointer
-* @retval None
-*/
-
-void HAL_RTC_MspDeInit(RTC_HandleTypeDef* hrtc)
-{
-
-  if(hrtc->Instance==RTC)
-  {
-  /* USER CODE BEGIN RTC_MspDeInit 0 */
-
-  /* USER CODE END RTC_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_RTC_DISABLE();
-  /* USER CODE BEGIN RTC_MspDeInit 1 */
-
-  /* USER CODE END RTC_MspDeInit 1 */
   }
 
 }
@@ -553,19 +448,6 @@ void HAL_SDRAM_MspDeInit(SDRAM_HandleTypeDef* hsdram){
 /** @defgroup HAL_MSP_Private_Functions
   * @{
   */
-
-/**
-  * @brief JPEG MSP Initialization
-  *        This function configures the hardware resources used in this example:
-  *           - Peripheral's clock enable
-  * @param hjpeg: JPEG handle pointer
-  * @retval None
-  */
-void HAL_JPEG_MspInit(JPEG_HandleTypeDef *hjpeg)
-{
-  /* Enable JPEG clock */
-  __HAL_RCC_JPEG_CLK_ENABLE();
-}
 
 /* USER CODE BEGIN 1 */
 /** @defgroup HAL_MSP_Private_Functions

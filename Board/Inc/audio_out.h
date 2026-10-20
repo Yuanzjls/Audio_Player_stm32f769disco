@@ -1,0 +1,57 @@
+/**
+ * @file  audio_out.h
+ * @brief Headphone output: SAI1 block A (I2S-like, 16-bit stereo) feeding the
+ *        WM8994 codec, with a circular DMA double buffer.
+ *
+ * The caller owns a buffer split in two halves. While the DMA plays one half,
+ * the callback reports which half has just been played so it can be refilled.
+ */
+#ifndef AUDIO_OUT_H
+#define AUDIO_OUT_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum
+{
+  AUDIO_OUT_HALF_DONE,  /**< First half played: refill it  */
+  AUDIO_OUT_FULL_DONE,  /**< Second half played: refill it */
+} audio_out_event_t;
+
+/** Called from the DMA interrupt. Keep it short (e.g. notify a task). */
+typedef void (*audio_out_callback_t)(audio_out_event_t event);
+
+/** True if the sample rate can be generated exactly by the clock tree and codec. */
+bool audio_out_is_rate_supported(uint32_t sample_rate);
+
+/**
+ * (Re)configure clocks, SAI and codec for @p sample_rate. Any running
+ * playback is stopped first. @p volume is 0..100.
+ */
+bool audio_out_configure(uint32_t sample_rate, uint8_t volume, audio_out_callback_t callback);
+
+/**
+ * Start circular playback of @p buffer (interleaved L/R int16 samples).
+ * @p size_bytes is the size of the whole buffer (both halves).
+ */
+bool audio_out_start(int16_t *buffer, uint32_t size_bytes);
+
+bool audio_out_pause(void);
+bool audio_out_resume(void);
+void audio_out_stop(void);
+
+/** @p volume is 0..100 */
+bool audio_out_set_volume(uint8_t volume);
+
+/** To be called from DMA2_Stream6_IRQHandler */
+void audio_out_dma_irq_handler(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* AUDIO_OUT_H */
