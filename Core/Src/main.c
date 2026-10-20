@@ -6,6 +6,7 @@
  */
 #include "main.h"
 
+#include <stdbool.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
@@ -24,7 +25,7 @@
 
 #define GUI_TASK_STACK      4096    /* words: TrueType rendering needs some stack */
 #define GUI_TASK_PRIORITY   1
-#define GUI_MAX_SLEEP_MS    20
+#define GUI_MAX_SLEEP_MS    100     /* upper bound; LVGL usually asks to run sooner */
 
 static void mpu_config(void);
 static void cpu_cache_enable(void);
@@ -95,7 +96,7 @@ static void gui_task(void *arg)
   lv_log_register_print_cb(lv_log_cb);
 
   display_init();
-  if (touch_init() == NULL)
+  if (touch_init(xTaskGetCurrentTaskHandle()) == NULL)
   {
     LOG_ERROR("touch input unavailable");
   }
@@ -103,12 +104,19 @@ static void gui_task(void *arg)
 
   for (;;)
   {
+    touch_process();
+
     uint32_t sleep_ms = lv_timer_handler();
     if (sleep_ms > GUI_MAX_SLEEP_MS)
     {
       sleep_ms = GUI_MAX_SLEEP_MS;
     }
-    vTaskDelay(pdMS_TO_TICKS(sleep_ms > 0U ? sleep_ms : 1U));
+    if (touch_read_pending() && sleep_ms > TOUCH_PRESSED_POLL_MS)
+    {
+      sleep_ms = TOUCH_PRESSED_POLL_MS;
+    }
+    /* Sleep until LVGL's next timer is due or the touch interrupt wakes us */
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms > 0U ? sleep_ms : 1U));
   }
 }
 
@@ -253,6 +261,36 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
   (void)task;
   g_overflow_task = task_name;
   halt();
+}
+
+/* ---- power / blocking waits ------------------------------------------------ */
+
+/* Nothing to run: stop the core until the next interrupt (tick, DMA, touch...) */
+void vApplicationIdleHook(void)
+{
+  __DSB();
+  __WFI();
+}
+
+/**
+ * HAL_Delay() is a busy-wait in the HAL. Drivers call it for hundreds of
+ * milliseconds (e.g. the WM8994 start-up), which would keep the CPU spinning
+ * and starve lower-priority tasks. Inside a task, sleep instead.
+ */
+void HAL_Delay(uint32_t ms)
+{
+  const bool in_isr = (__get_IPSR() != 0U);
+  if (!in_isr && xTaskGetSchedulerState() == taskSCHEDULER_RUNNING)
+  {
+    /* +1 tick: like the HAL version, wait at least the requested time */
+    vTaskDelay(pdMS_TO_TICKS(ms) + 1U);
+    return;
+  }
+
+  const uint32_t start = HAL_GetTick();
+  while ((HAL_GetTick() - start) < ms + 1U)
+  {
+  }
 }
 
 void vApplicationMallocFailedHook(void)
