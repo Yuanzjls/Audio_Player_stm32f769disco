@@ -16,6 +16,7 @@
 #include "display.h"
 #include "i2c_bus.h"
 #include "log.h"
+#include "lv_fs_sd.h"
 #include "player.h"
 #include "stm32f769i_discovery_sdram.h"
 #include "touch.h"
@@ -94,6 +95,7 @@ static void gui_task(void *arg)
   lv_tick_set_cb(lv_tick_cb);
   lv_delay_set_cb(lv_delay_cb);
   lv_log_register_print_cb(lv_log_cb);
+  lv_fs_sd_init();
 
   display_init();
   if (touch_init(xTaskGetCurrentTaskHandle()) == NULL)

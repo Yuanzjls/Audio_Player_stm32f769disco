@@ -20,7 +20,8 @@
 /*----------------------------------------------------------------------------
  * Audio player (STM32F769I-Discovery). This is LVGL 9.6.0's lv_conf_template.h
  * with these changes: RGB565, 4 MB heap in SDRAM, Montserrat 20/28/40,
- * light theme, log + assert, TinyTTF and the FatFs driver ("S:"),
+ * light theme, log + assert, TinyTTF (1024 glyph cache); the "S:" drive is
+ * Board/Src/lv_fs_sd.c (FatFs with fast seek) instead of LVGL's FatFs driver,
  * no examples/demos.
  *--------------------------------------------------------------------------*/
 
@@ -1213,7 +1214,7 @@
 #define LV_TINY_TTF_FILE_SUPPORT 1
 
 /** Glyph cache size (glyphs) */
-#define LV_TINY_TTF_CACHE_GLYPH_CNT 256
+#define LV_TINY_TTF_CACHE_GLYPH_CNT 1024
 
 /** Kerning cache size (entries) */
 #define LV_TINY_TTF_CACHE_KERNING_CNT 256
@@ -2009,7 +2010,7 @@
 #endif /*LV_USE_FS_WIN32*/
 
 /** FatFS */
-#define LV_USE_FS_FATFS 1
+#define LV_USE_FS_FATFS 0
 
 #if LV_USE_FS_FATFS
 /** Drive letter for FatFS (65 = 'A', 0 = disabled) */

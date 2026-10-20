@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-foreach(_sub Middlewares/lvgl Middlewares/FreeRTOS-Kernel Drivers/STM32F7xx_HAL_Driver
+foreach(_sub Middlewares/lvgl Middlewares/FreeRTOS-Kernel Middlewares/minimp3 Drivers/STM32F7xx_HAL_Driver
              Drivers/CMSIS/Device/ST/STM32F7xx Drivers/BSP/STM32F769I-Discovery)
   file(GLOB _sub_files "${CMAKE_CURRENT_SOURCE_DIR}/${_sub}/*")
   if(NOT _sub_files)
@@ -102,7 +102,6 @@ set(FATFS_SOURCES
   FATFS/ff.c
   FATFS/ffsystem.c
   FATFS/ffunicode.c
-  FATFS/ff_readonly.c
 )
 
 # FreeRTOS kernel (submodule). The Cortex-M7 r1p0 in the STM32F769 uses the CM4F port.
@@ -138,10 +137,16 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE
   Board/Inc
   App/Inc
+  Middlewares/minimp3
 )
+
+# MP3 decoder: Layer III only, no SIMD (the Cortex-M7 has no NEON)
+target_compile_definitions(${PROJECT_NAME} PRIVATE MINIMP3_ONLY_MP3 MINIMP3_NO_SIMD)
 
 # Warnings for our own code
 set_source_files_properties(${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter")
+# minimp3 implementation: third-party code, and decoding speed matters even in Debug
+set_source_files_properties(App/Src/minimp3_impl.c PROPERTIES COMPILE_OPTIONS "-O2;-w")
 
 target_link_options(${PROJECT_NAME} PRIVATE
   -T${LINKER_SCRIPT}

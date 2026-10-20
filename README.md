@@ -1,11 +1,16 @@
 # STM32F769 Audio (wav) Player
 
-A touch-screen music player for the STM32F769I-Discovery board. It plays `.wav` files from the
+A touch-screen music player for the STM32F769I-Discovery board. It plays `.wav` and `.mp3` files from the
 microSD card through the headphone jack, with play/pause, next, repeat-one, a seek bar and volume
 control. The UI is built with [LVGL](https://lvgl.io) 9 and runs on FreeRTOS. Song titles in any
 language (e.g. Chinese) are drawn with a TrueType font loaded from the SD card.
 
-Supported files: PCM WAV, 16-bit, mono or stereo, at 8 / 11.025 / 16 / 22.05 / 32 / 44.1 / 48 / 96 kHz.
+Supported files:
+* **WAV**: PCM 16-bit, mono or stereo, 8 – 96 kHz.
+* **MP3**: MPEG-1/2/2.5 Layer III, constant or variable bitrate, mono or stereo, 8 – 48 kHz.
+  Title and artist come from ID3v2 / ID3v1 tags (UTF-8, UTF-16 and GBK text), otherwise from
+  "Artist - Title" file names. The length is exact from a Xing/VBRI header, or measured by a
+  background scan while the song plays.
 
 Hardware: STM32F769I-Discovery with the OTM8009A display (MB1166 revisions up to A-08). Later
 revisions ship an NT35510 panel, which the display driver does not support yet.
@@ -13,7 +18,8 @@ revisions ship an NT35510 panel, which the display driver does not support yet.
 ## SD card
 
 ```
-/Music/*.wav      songs, played in directory order
+/Music/*.wav      songs (.wav, .mp3), listed and played in name order
+/Music/*.mp3
 /font.ttf         optional: font for the song titles (font.otf / font.ttc also work, for a
                   .ttc collection the first face is used), e.g. Noto Sans SC for Chinese.
                   Without it only Latin titles render.
@@ -59,8 +65,8 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (playlist + streaming task, command queue), `wav` (RIFF parser), `ui` (LVGL screen) |
-| `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART) |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `ui` (LVGL screen) |
+| `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL and the FreeRTOS kernel (submodules) |
 | `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied) |
@@ -76,7 +82,7 @@ there is nothing to do:
 
 | Part | Mechanism |
 |---|---|
-| Audio | SAI1 circular DMA; half/full-transfer interrupts wake the `player` task to refill a half from the SD card. Clocked from PLLI2S for the exact 44.1 kHz or 48 kHz family. |
+| Audio | SAI1 circular DMA; half/full-transfer interrupts wake the `player` task to decode the next half (MP3 decoding takes ~8 % CPU). Clocked from PLLI2S for the exact 44.1 kHz or 48 kHz family. |
 | SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA into cacheable SDRAM goes through an uncached bounce buffer. |
 | Display | DSI adapted command mode: on the panel's tearing-effect interrupt the finished LVGL frame (double-buffered in SDRAM) is sent in 4 tear-free stripes. Nothing is sent while the screen is unchanged. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
@@ -89,6 +95,7 @@ Codec volume changes (a few I2C writes) and the UART log stay blocking: they are
 | Component | Version | Source |
 |---|---|---|
 | LVGL | 9.6.0 | submodule `Middlewares/lvgl` |
+| minimp3 | commit ea99364 (2026-07-27) | submodule `Middlewares/minimp3` (public domain) |
 | FreeRTOS kernel | V11.3.1 | submodule `Middlewares/FreeRTOS-Kernel` (port `GCC/ARM_CM4F`) |
 | STM32F7 HAL | v1.3.3 | submodule `Drivers/STM32F7xx_HAL_Driver` |
 | CMSIS device F7 | v1.2.10 | submodule `Drivers/CMSIS/Device/ST/STM32F7xx` (startup + system files) |
@@ -106,6 +113,6 @@ https://www.youtube.com/watch?v=nAqI61Whyyc&feature=youtu.be (STemWin version)
 
 ## Todo
 
-* Add other formats (such as MP3 and flac) support.
+* Add other formats (FLAC, Ogg Vorbis).
 * Add lyric support.
 * Add frequency spectrum

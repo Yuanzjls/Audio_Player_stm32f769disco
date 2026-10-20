@@ -31,3 +31,6 @@
 [submodule "Drivers/BSP/Components/nt35510"]
 	path = Drivers/BSP/Components/nt35510
 	url = https://github.com/STMicroelectronics/stm32-nt35510.git
+[submodule "Middlewares/minimp3"]
+	path = Middlewares/minimp3
+	url = https://github.com/lieff/minimp3.git

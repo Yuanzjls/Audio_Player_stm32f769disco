@@ -34,6 +34,9 @@
 #define LIBRARY_WIDTH       300
 #define LIBRARY_HEADER_H    64
 #define LIBRARY_ITEM_H      56
+#define LIBRARY_LIST_H      (480 - LIBRARY_HEADER_H)
+/* Row widgets that are recycled while scrolling: the visible rows plus margin */
+#define LIBRARY_POOL        ((LIBRARY_LIST_H / LIBRARY_ITEM_H) + 3)
 #define PANEL_X             LIBRARY_WIDTH
 #define PANEL_WIDTH         (800 - LIBRARY_WIDTH)
 #define PANEL_PAD           28
@@ -91,7 +94,15 @@ static ui_widgets_t s_ui;
 static player_status_t s_status;              /* last status shown */
 static uint32_t   s_shown_track_serial   = UINT32_MAX;
 static uint32_t   s_shown_library_serial = UINT32_MAX;
-static int32_t    s_highlighted = -1;          /* library row marked as playing */
+static int32_t    s_highlighted = -1;          /* library index marked as playing */
+
+/* Virtualized library: s_rows[k] shows the track index i with i % LIBRARY_POOL == k,
+ * so scrolling by one row re-labels just one widget, and only the names that
+ * become visible are measured and drawn (glyph lookups are slow on the SD card). */
+static lv_obj_t  *s_rows[LIBRARY_POOL];
+static int32_t    s_row_index[LIBRARY_POOL];     /* track shown by each row, -1 = none */
+static uint16_t   s_library_count;
+static lv_obj_t  *s_list_spacer;
 static bool       s_first_refresh = true;
 static int32_t    s_last_volume_sent = -1;
 static bool       s_fonts_tried;
@@ -190,8 +201,11 @@ static void on_repeat_clicked(lv_event_t *e)
 
 static void on_track_clicked(lv_event_t *e)
 {
-  const uintptr_t index = (uintptr_t)lv_event_get_user_data(e);
-  player_play_track((uint16_t)index);
+  const uintptr_t slot = (uintptr_t)lv_event_get_user_data(e);
+  if (s_row_index[slot] >= 0)
+  {
+    player_play_track((uint16_t)s_row_index[slot]);
+  }
 }
 
 static void on_seek_event(lv_event_t *e)
@@ -266,14 +280,19 @@ static void try_load_fonts(void)
 
     lv_obj_set_style_text_font(s_ui.title, s_title_font, 0);
     lv_obj_set_style_text_font(s_ui.artist, s_text_font, 0);
-    /* Rebuild the library list with the new font if it already exists */
+    /* Re-label the library rows with the new font */
+    for (uint32_t k = 0; k < LIBRARY_POOL; k++)
+    {
+      lv_obj_set_style_text_font(lv_obj_get_child(s_rows[k], 0), s_text_font, 0);
+      s_row_index[k] = -1;
+    }
     s_shown_library_serial = UINT32_MAX;
     return;
   }
   LOG_WARN("ui: no font.ttf/font.otf/font.ttc on the SD card, non-Latin titles will not render");
 }
 
-/* ---- library list ---------------------------------------------------------- */
+/* ---- library list (virtualized) ------------------------------------------ */
 
 static void style_library_row(lv_obj_t *row, bool playing)
 {
@@ -283,37 +302,63 @@ static void style_library_row(lv_obj_t *row, bool playing)
   lv_label_set_text(lv_obj_get_child(row, 1), playing ? LV_SYMBOL_AUDIO : "");
 }
 
+/* Show track @p index in row slot @p slot (or hide the row) */
+static void bind_row(uint32_t slot, int32_t index)
+{
+  lv_obj_t *row = s_rows[slot];
+
+  if (index < 0 || index >= (int32_t)s_library_count)
+  {
+    lv_obj_set_hidden(row, true);
+    s_row_index[slot] = -1;
+    return;
+  }
+  if (s_row_index[slot] != index)
+  {
+    char name[PLAYER_TITLE_MAX];
+    if (!player_get_track_name((uint16_t)index, name, sizeof(name)))
+    {
+      name[0] = '\0';
+    }
+    lv_label_set_text(lv_obj_get_child(row, 0), name);
+    lv_obj_set_y(row, index * LIBRARY_ITEM_H);
+    s_row_index[slot] = index;
+  }
+  style_library_row(row, index == s_highlighted);
+  lv_obj_set_hidden(row, false);
+}
+
+/* Bind the rows to the tracks around the current scroll position */
+static void layout_rows(void)
+{
+  int32_t first = lv_obj_get_scroll_y(s_ui.list) / LIBRARY_ITEM_H;
+  if (first < 0)
+  {
+    first = 0;
+  }
+  for (int32_t i = first; i < first + (int32_t)LIBRARY_POOL; i++)
+  {
+    bind_row((uint32_t)i % LIBRARY_POOL, i);
+  }
+}
+
+static void on_list_scroll(lv_event_t *e)
+{
+  (void)e;
+  layout_rows();
+}
+
 static void build_library(uint16_t count)
 {
-  char name[PLAYER_TITLE_MAX];
-
-  lv_obj_clean(s_ui.list);
-  s_highlighted = -1;
-
-  for (uint16_t i = 0; i < count; i++)
+  s_library_count = count;
+  s_highlighted   = -1;
+  lv_obj_set_height(s_list_spacer, (int32_t)count * LIBRARY_ITEM_H);
+  lv_obj_scroll_to_y(s_ui.list, 0, LV_ANIM_OFF);
+  for (uint32_t k = 0; k < LIBRARY_POOL; k++)
   {
-    if (!player_get_track_name(i, name, sizeof(name)))
-    {
-      break;
-    }
-    lv_obj_t *row = make_box(s_ui.list, COLOR_PANEL);
-    lv_obj_set_size(row, lv_pct(100), LIBRARY_ITEM_H);
-    lv_obj_set_clickable(row, true);
-    lv_obj_set_style_bg_color(row, COLOR_SURFACE, LV_STATE_PRESSED);
-    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_color(row, COLOR_DIVIDER, 0);
-    lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_add_event_cb(row, on_track_clicked, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
-
-    lv_obj_t *label = make_label(row, text_font(), COLOR_TEXT);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_width(label, LIBRARY_WIDTH - 72);
-    lv_label_set_text(label, name);
-    lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);
-
-    lv_obj_t *playing_icon = make_label(row, &lv_font_montserrat_20, COLOR_ACCENT);
-    lv_obj_align(playing_icon, LV_ALIGN_RIGHT_MID, -18, 0);
+    s_row_index[k] = -1;
   }
+  layout_rows();
 
   lv_label_set_text_fmt(s_ui.library_count, "%u songs", (unsigned)count);
   lv_obj_set_hidden(s_ui.list_hint, count > 0U);
@@ -325,40 +370,58 @@ static void highlight_library_row(int32_t index)
   {
     return;
   }
-  const int32_t rows = (int32_t)lv_obj_get_child_count(s_ui.list);
-  if (s_highlighted >= 0 && s_highlighted < rows)
-  {
-    style_library_row(lv_obj_get_child(s_ui.list, s_highlighted), false);
-  }
-  if (index >= 0 && index < rows)
-  {
-    lv_obj_t *row = lv_obj_get_child(s_ui.list, index);
-    style_library_row(row, true);
-    lv_obj_scroll_to_view(row, LV_ANIM_ON);
-  }
   s_highlighted = index;
+
+  /* Bring the playing track into view if it is not (fully) visible */
+  const int32_t top    = index * LIBRARY_ITEM_H;
+  const int32_t scroll = lv_obj_get_scroll_y(s_ui.list);
+  if (top < scroll || top + LIBRARY_ITEM_H > scroll + LIBRARY_LIST_H)
+  {
+    lv_obj_scroll_to_y(s_ui.list, (top > LIBRARY_ITEM_H) ? top - LIBRARY_ITEM_H : 0, LV_ANIM_ON);
+  }
+  /* Restyle the visible rows (the scroll event re-binds them as it animates) */
+  for (uint32_t k = 0; k < LIBRARY_POOL; k++)
+  {
+    if (s_row_index[k] >= 0)
+    {
+      style_library_row(s_rows[k], s_row_index[k] == s_highlighted);
+    }
+  }
 }
 
 /* ---- refresh --------------------------------------------------------------- */
+
+static void set_duration(uint32_t duration_s)
+{
+  lv_slider_set_range(s_ui.seek, 0, (int32_t)(duration_s > 0U ? duration_s : 1U));
+  set_label_time(s_ui.time_total, duration_s);
+}
 
 static void refresh_track(const player_status_t *st)
 {
   char artist[PLAYER_TITLE_MAX];
   const char *title;
 
-  split_name(st->title, artist, sizeof(artist), &title);
+  if (st->artist[0] != '\0')
+  {
+    /* Tags present */
+    snprintf(artist, sizeof(artist), "%s", st->artist);
+    title = st->title;
+  }
+  else
+  {
+    split_name(st->title, artist, sizeof(artist), &title);
+  }
   lv_label_set_text(s_ui.artist, artist[0] != '\0' ? artist : "Unknown artist");
   lv_label_set_text(s_ui.title, title);
 
-  lv_label_set_text_fmt(s_ui.track_info, "%u / %u   %lu.%lu kHz %s",
-                        (unsigned)st->track_index + 1U, (unsigned)st->track_count,
+  /* Kept short: it shares the header line with the "NOW PLAYING" caption */
+  lv_label_set_text_fmt(s_ui.track_info, "%u / %u   %s  %lu.%lu kHz",
+                        (unsigned)st->track_index + 1U, (unsigned)st->track_count, st->format,
                         (unsigned long)(st->sample_rate / 1000U),
-                        (unsigned long)((st->sample_rate % 1000U) / 100U),
-                        st->channels == 1U ? "mono" : "stereo");
+                        (unsigned long)((st->sample_rate % 1000U) / 100U));
 
-  lv_slider_set_range(s_ui.seek, 0, (int32_t)(st->duration_s > 0U ? st->duration_s : 1U));
-  set_label_time(s_ui.time_total, st->duration_s);
-
+  set_duration(st->duration_s);
   highlight_library_row(st->track_index);
 }
 
@@ -431,6 +494,12 @@ static void refresh_cb(lv_timer_t *timer)
   lv_obj_set_style_bg_color(s_ui.btn_repeat, repeat_one ? COLOR_ACCENT : COLOR_SURFACE, 0);
   lv_obj_set_style_text_color(s_ui.btn_repeat_icon, repeat_one ? COLOR_ON_ACCENT : COLOR_TEXT, 0);
 
+  /* The exact length of a VBR MP3 may be known only after a while */
+  if (has_tracks && st.track_serial == s_status.track_serial && st.duration_s != s_status.duration_s)
+  {
+    set_duration(st.duration_s);
+  }
+
   /* Progress, unless the user is dragging the seek bar */
   if (!lv_slider_is_dragged(s_ui.seek))
   {
@@ -460,14 +529,43 @@ static void build_library_panel(lv_obj_t *scr)
   lv_obj_align(s_ui.library_count, LV_ALIGN_TOP_RIGHT, -20, 22);
 
   s_ui.list = make_box(panel, COLOR_PANEL);
-  lv_obj_set_size(s_ui.list, LIBRARY_WIDTH - 1, 480 - LIBRARY_HEADER_H);
+  lv_obj_set_size(s_ui.list, LIBRARY_WIDTH - 1, LIBRARY_LIST_H);
   lv_obj_set_pos(s_ui.list, 0, LIBRARY_HEADER_H);
   lv_obj_set_scrollable(s_ui.list, true);
   lv_obj_set_scroll_dir(s_ui.list, LV_DIR_VER);
-  lv_obj_set_flex_flow(s_ui.list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_border_side(s_ui.list, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_border_color(s_ui.list, COLOR_DIVIDER, 0);
   lv_obj_set_style_border_width(s_ui.list, 1, 0);
+  lv_obj_add_event_cb(s_ui.list, on_list_scroll, LV_EVENT_SCROLL, NULL);
+
+  /* Invisible, as tall as the whole library: gives the list its scroll range */
+  s_list_spacer = make_box(s_ui.list, COLOR_PANEL);
+  lv_obj_set_size(s_list_spacer, 1, 0);
+  lv_obj_set_style_bg_opa(s_list_spacer, LV_OPA_TRANSP, 0);
+
+  for (uint32_t k = 0; k < LIBRARY_POOL; k++)
+  {
+    lv_obj_t *row = make_box(s_ui.list, COLOR_PANEL);
+    lv_obj_set_size(row, LIBRARY_WIDTH - 1, LIBRARY_ITEM_H);
+    lv_obj_set_clickable(row, true);
+    lv_obj_set_style_bg_color(row, COLOR_SURFACE, LV_STATE_PRESSED);
+    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(row, COLOR_DIVIDER, 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_add_event_cb(row, on_track_clicked, LV_EVENT_CLICKED, (void *)(uintptr_t)k);
+
+    lv_obj_t *label = make_label(row, text_font(), COLOR_TEXT);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(label, LIBRARY_WIDTH - 72);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);
+
+    lv_obj_t *playing_icon = make_label(row, &lv_font_montserrat_20, COLOR_ACCENT);
+    lv_obj_align(playing_icon, LV_ALIGN_RIGHT_MID, -18, 0);
+
+    lv_obj_set_hidden(row, true);
+    s_rows[k]      = row;
+    s_row_index[k] = -1;
+  }
 
   s_ui.list_hint = make_label(panel, &lv_font_montserrat_20, COLOR_TEXT_DIM);
   lv_label_set_text(s_ui.list_hint, "Put .wav files in /Music");

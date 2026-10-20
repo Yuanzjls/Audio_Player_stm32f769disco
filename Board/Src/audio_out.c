@@ -4,7 +4,7 @@
  *
  * Clocking: SAI1 is clocked from PLLI2S (PLLSAI is reserved for the LCD).
  *  - 11.025/22.05/44.1 kHz: PLLI2S VCO 429 MHz / Q 2 / DIVQ 19 = 11.289 MHz
- *  - 8/16/32/48/96 kHz:     PLLI2S VCO 344 MHz / Q 7 / DIVQ 1  = 49.142 MHz
+ *  - 8/12/16/24/32/48/96 kHz: PLLI2S VCO 344 MHz / Q 7 / DIVQ 1 = 49.142 MHz
  * The SAI master divider then derives MCLK = 256 x Fs for the codec.
  */
 #include "audio_out.h"
@@ -24,6 +24,11 @@
  * the callback uses FreeRTOS FromISR APIs. */
 #define AUDIO_DMA_IRQ_PRIORITY    1
 
+/* WM8994 AIF1 rate register: AIF1_SR in bits 7:4, AIF1CLK_RATE in bits 3:0 (3 = 256 fs) */
+#define WM8994_AIF1_RATE_REG      0x210U
+#define AIF1_RATE_12K_256FS       0x0023U
+#define AIF1_RATE_24K_256FS       0x0053U
+
 static SAI_HandleTypeDef     s_sai;
 static DMA_HandleTypeDef     s_dma;
 static audio_out_callback_t  s_callback;
@@ -31,7 +36,7 @@ static bool                  s_codec_ready;
 
 static const uint32_t k_supported_rates[] =
 {
-  8000, 11025, 16000, 22050, 32000, 44100, 48000, 96000,
+  8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 96000,
 };
 
 bool audio_out_is_rate_supported(uint32_t sample_rate)
@@ -123,6 +128,12 @@ static bool configure_codec(uint32_t sample_rate, uint8_t volume)
      * DC servo triggers), so it is never 0 even when everything works; ST's BSP
      * ignores it too. The ID check above is what proves the codec is there. */
     (void)wm8994_drv.Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_HEADPHONE, volume, sample_rate);
+    /* The ST driver has no 12 / 24 kHz setting (it falls back to 48 kHz) */
+    if (sample_rate == 12000U || sample_rate == 24000U)
+    {
+      AUDIO_IO_Write(AUDIO_I2C_ADDRESS, WM8994_AIF1_RATE_REG,
+                     (sample_rate == 12000U) ? AIF1_RATE_12K_256FS : AIF1_RATE_24K_256FS);
+    }
     ok = true;
   }
   i2c_bus_unlock();

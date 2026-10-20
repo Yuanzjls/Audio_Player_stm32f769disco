@@ -2,9 +2,9 @@
  * @file  player.c
  * @brief Playlist / streaming logic.
  *
- * Audio is streamed from the SD card into a two-half circular DMA buffer:
- * whenever the DMA finishes playing one half, the task refills it from the
- * file. Mono files are expanded to stereo while refilling.
+ * Audio is decoded from the SD card (decoder.c: WAV, MP3) into a two-half
+ * circular DMA buffer: whenever the DMA finishes playing one half, the task
+ * refills it with the next stereo samples.
  *
  * End of track: once the file is exhausted the rest of the buffer is filled
  * with silence; after the half holding the last samples has been played the
@@ -27,15 +27,16 @@
 #include "audio_out.h"
 #include "ff.h"
 #include "log.h"
-#include "wav.h"
+#include "decoder.h"
 
-#define TASK_STACK_WORDS   1024
+#define TASK_STACK_WORDS   6144       /* the MP3 decoder needs ~16 KB of scratch on the stack */
 #define TASK_PRIORITY      3          /* above the GUI: audio must never starve */
 #define CMD_QUEUE_LENGTH   8
 
 /* Each half holds ~93 ms of 44.1 kHz stereo audio */
 #define HALF_BYTES         16384U
 #define HALF_SAMPLES       (HALF_BYTES / sizeof(int16_t))
+#define HALF_FRAMES        (HALF_SAMPLES / 2U)          /* stereo frames per half */
 
 #define NOTIFY_HALF_DONE   (1UL << 0)
 #define NOTIFY_FULL_DONE   (1UL << 1)
@@ -68,11 +69,10 @@ typedef struct
 /* Track currently loaded */
 typedef struct
 {
-  FIL        file;
-  wav_info_t info;
-  bool       open;
-  uint32_t   remaining;      /* bytes of sample data not yet read          */
-  uint8_t    silent_halves;  /* halves filled with silence after the end   */
+  decoder_info_t info;
+  bool           open;
+  uint64_t       frames_out;     /* stereo frames handed to the DMA buffer      */
+  uint8_t        silent_halves;  /* halves filled with silence after the end    */
 } track_t;
 
 static TaskHandle_t      s_task;
@@ -119,26 +119,25 @@ static player_state_t get_state(void)
 
 static void update_position(void)
 {
-  if (!s_track.open || s_track.info.byte_rate == 0U)
+  if (!s_track.open || s_track.info.sample_rate == 0U)
   {
     return;
   }
-  /* Bytes handed to the DMA minus roughly one buffered half */
-  uint32_t played = s_track.info.data_size - s_track.remaining;
-  const uint32_t buffered = (s_track.info.channels == 2U) ? HALF_BYTES : HALF_BYTES / 2U;
-  played = (played > buffered) ? played - buffered : 0U;
+  /* Frames handed to the DMA minus roughly one buffered half */
+  const uint64_t played = (s_track.frames_out > HALF_FRAMES) ? s_track.frames_out - HALF_FRAMES : 0U;
 
   status_lock();
-  s_status.position_s = played / s_track.info.byte_rate;
+  s_status.position_s = (uint32_t)(played / s_track.info.sample_rate);
   status_unlock();
 }
 
 /* ---- playlist -------------------------------------------------------------- */
 
-static bool is_wav_name(const char *name)
+/* Length of the name without its extension */
+static size_t base_name_len(const char *name)
 {
-  const size_t len = strlen(name);
-  return len > 4U && strcasecmp(&name[len - 4U], ".wav") == 0;
+  const char *dot = strrchr(name, '.');
+  return (dot != NULL) ? (size_t)(dot - name) : strlen(name);
 }
 
 static int compare_names(const void *a, const void *b)
@@ -159,7 +158,7 @@ static uint16_t scan_library(void)
   }
   while (f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0')
   {
-    if ((info.fattrib & (AM_DIR | AM_HID | AM_SYS)) != 0U || !is_wav_name(info.fname))
+    if ((info.fattrib & (AM_DIR | AM_HID | AM_SYS)) != 0U || !decoder_is_supported(info.fname))
     {
       continue;
     }
@@ -181,7 +180,7 @@ static void close_track(void)
 {
   if (s_track.open)
   {
-    f_close(&s_track.file);
+    decoder_close();
     s_track.open = false;
   }
 }
@@ -200,46 +199,44 @@ static bool open_track(uint16_t index)
   snprintf(name, sizeof(name), "%s", s_names[index]);
 
   snprintf(path, sizeof(path), "%s/%s", PLAYER_MUSIC_DIR, name);
-  if (f_open(&s_track.file, path, FA_READ) != FR_OK)
+  if (!decoder_open(path, &s_track.info))
   {
-    LOG_WARN("player: cannot open %s", path);
     return false;
   }
   s_track.open = true;
 
-  const wav_result_t res = wav_parse(&s_track.file, &s_track.info);
-  if (res != WAV_OK)
+  const decoder_info_t *info = &s_track.info;
+  if (!audio_out_is_rate_supported(info->sample_rate))
   {
-    LOG_WARN("player: %s: %s", name, wav_result_str(res));
-    close_track();
-    return false;
-  }
-  if (!audio_out_is_rate_supported(s_track.info.sample_rate))
-  {
-    LOG_WARN("player: %s: unsupported sample rate %lu Hz", name, (unsigned long)s_track.info.sample_rate);
+    LOG_WARN("player: %s: unsupported sample rate %lu Hz", name, (unsigned long)info->sample_rate);
     close_track();
     return false;
   }
 
-  s_track.remaining     = s_track.info.data_size;
+  s_track.frames_out    = 0;
   s_track.silent_halves = 0;
 
-  /* Show the name without the extension */
-  name[strlen(name) - 4U] = '\0';
+  /* Without a title tag, show the file name without its extension */
+  name[base_name_len(name)] = '\0';
 
   status_lock();
-  s_status.track_index = index;
-  s_status.position_s  = 0;
-  s_status.duration_s  = wav_duration_s(&s_track.info);
-  s_status.sample_rate = s_track.info.sample_rate;
-  s_status.channels    = (uint8_t)s_track.info.channels;
+  s_status.track_index  = index;
+  s_status.position_s   = 0;
+  s_status.duration_s   = info->duration_s;
+  s_status.sample_rate  = info->sample_rate;
+  s_status.channels     = info->channels;
+  s_status.bitrate_kbps = info->bitrate_kbps;
+  s_status.vbr          = info->vbr;
   s_status.track_serial++;
-  snprintf(s_status.title, sizeof(s_status.title), "%s", name);
+  snprintf(s_status.format, sizeof(s_status.format), "%s", info->format);
+  snprintf(s_status.title, sizeof(s_status.title), "%s", info->title[0] != '\0' ? info->title : name);
+  snprintf(s_status.artist, sizeof(s_status.artist), "%s", info->artist);
   status_unlock();
 
-  LOG_INFO("player: [%u] %s (%lu Hz, %u ch, %lu s)", (unsigned)index + 1U, name,
-           (unsigned long)s_track.info.sample_rate, (unsigned)s_track.info.channels,
-           (unsigned long)wav_duration_s(&s_track.info));
+  LOG_INFO("player: [%u] %s (%s %lu Hz, %u ch, %lu kbps%s, %lu s%s)", (unsigned)index + 1U, name,
+           info->format, (unsigned long)info->sample_rate, (unsigned)info->channels,
+           (unsigned long)info->bitrate_kbps, info->vbr ? " VBR" : "",
+           (unsigned long)info->duration_s, info->duration_exact ? "" : " estimated");
   return true;
 }
 
@@ -261,50 +258,17 @@ static bool open_playable_track(uint16_t index, uint16_t count)
 static void fill_half(uint32_t half)
 {
   int16_t *dst = &s_audio_buf[half * HALF_SAMPLES];
-  const bool mono = (s_track.info.channels == 1U);
-  UINT got = 0;
+  const uint32_t got = s_track.open ? decoder_read(dst, HALF_FRAMES) : 0U;
 
-  if (s_track.open && s_track.remaining > 0U)
-  {
-    /* Mono is read into the first half of the region and expanded in place */
-    uint32_t want = mono ? HALF_BYTES / 2U : HALF_BYTES;
-    if (want > s_track.remaining)
-    {
-      want = s_track.remaining;
-    }
-    if (f_read(&s_track.file, dst, want, &got) != FR_OK)
-    {
-      LOG_ERROR("player: read error, skipping rest of track");
-      got = 0;
-      s_track.remaining = 0;
-    }
-    else
-    {
-      got -= got % s_track.info.block_align;
-      s_track.remaining = (got == 0U) ? 0U : s_track.remaining - got;
-    }
-
-    if (mono)
-    {
-      /* Walk backwards so samples are not overwritten before being copied */
-      for (int32_t i = (int32_t)(got / sizeof(int16_t)) - 1; i >= 0; i--)
-      {
-        const int16_t sample = dst[i];
-        dst[2 * i]     = sample;
-        dst[2 * i + 1] = sample;
-      }
-      got *= 2U;
-    }
-  }
-  else
+  if (got == 0U)
   {
     s_track.silent_halves++;
   }
-
-  if (got < HALF_BYTES)
+  if (got < HALF_FRAMES)
   {
-    memset((uint8_t *)dst + got, 0, HALF_BYTES - got);
+    memset(&dst[2U * got], 0, (HALF_FRAMES - got) * 2U * sizeof(int16_t));
   }
+  s_track.frames_out += got;
 }
 
 static void audio_callback(audio_out_event_t event)
@@ -380,7 +344,7 @@ static void play_track(uint16_t index)
   if (!open_playable_track(index, track_count()))
   {
     stop_output();
-    set_state(PLAYER_STATE_NO_TRACKS, "No playable .wav files in /Music");
+    set_state(PLAYER_STATE_NO_TRACKS, "No playable music files in /Music");
     return;
   }
 
@@ -402,8 +366,9 @@ static void on_track_finished(void)
 
   if (repeat == PLAYER_REPEAT_ONE)
   {
-    f_lseek(&s_track.file, s_track.info.data_offset);
-    s_track.remaining     = s_track.info.data_size;
+    uint32_t actual_s;
+    decoder_seek(0, &actual_s);
+    s_track.frames_out    = 0;
     s_track.silent_halves = 0;
     return;
   }
@@ -441,22 +406,14 @@ static void skip_to(uint16_t index, player_state_t state)
 
 static void seek(uint32_t position_s)
 {
-  if (!s_track.open)
+  uint32_t actual_s;
+  if (!s_track.open || !decoder_seek(position_s, &actual_s))
   {
     return;
   }
-  uint32_t offset = position_s * s_track.info.byte_rate;
-  if (offset >= s_track.info.data_size)
-  {
-    offset = s_track.info.data_size - s_track.info.block_align;
-  }
-  offset -= offset % s_track.info.block_align;
-
-  if (f_lseek(&s_track.file, s_track.info.data_offset + offset) == FR_OK)
-  {
-    s_track.remaining     = s_track.info.data_size - offset;
-    s_track.silent_halves = 0;
-  }
+  /* The half already queued still plays: count it so the position is right */
+  s_track.frames_out    = (uint64_t)actual_s * s_track.info.sample_rate + HALF_FRAMES;
+  s_track.silent_halves = 0;
 }
 
 static void handle_command(const command_t *cmd)
@@ -578,10 +535,10 @@ static void mount_card_and_scan(void)
         set_state(PLAYER_STATE_STOPPED, NULL);
         return;
       }
-      set_state(PLAYER_STATE_NO_TRACKS, "No .wav files in /Music");
+      set_state(PLAYER_STATE_NO_TRACKS, "No .wav or .mp3 files in /Music");
       if (!warned)
       {
-        LOG_WARN("player: no .wav files in %s", PLAYER_MUSIC_DIR);
+        LOG_WARN("player: no .wav or .mp3 files in %s", PLAYER_MUSIC_DIR);
       }
     }
     else
@@ -635,7 +592,7 @@ static void player_task(void *arg)
   }
   else
   {
-    set_state(PLAYER_STATE_NO_TRACKS, "No playable .wav files in /Music");
+    set_state(PLAYER_STATE_NO_TRACKS, "No playable music files in /Music");
   }
 
   for (;;)
@@ -659,6 +616,16 @@ static void player_task(void *arg)
         on_track_finished();
       }
       update_position();
+
+      /* Background work (e.g. exact length of a VBR MP3) between refills */
+      uint32_t duration_s;
+      if (decoder_poll(&duration_s))
+      {
+        status_lock();
+        s_status.duration_s = duration_s;
+        status_unlock();
+        LOG_INFO("player: exact length %lu s", (unsigned long)duration_s);
+      }
     }
 
     command_t cmd;
@@ -711,9 +678,8 @@ bool player_get_track_name(uint16_t index, char *name, size_t len)
   status_lock();
   if (index < s_status.track_count && len > 0U)
   {
-    /* File name without the .wav extension */
-    const size_t n = strlen(s_names[index]) - 4U;
-    snprintf(name, len, "%.*s", (int)n, s_names[index]);
+    /* File name without its extension */
+    snprintf(name, len, "%.*s", (int)base_name_len(s_names[index]), s_names[index]);
     ok = true;
   }
   status_unlock();

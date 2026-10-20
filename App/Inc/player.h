@@ -2,7 +2,7 @@
  * @file  player.h
  * @brief WAV playlist player running in its own task.
  *
- * Plays the *.wav files of /Music on the SD card, sorted by name.
+ * Plays the .wav and .mp3 files of /Music on the SD card, sorted by name.
  * Control functions are thread safe: they queue a command for the player
  * task and return immediately. The UI polls player_get_status().
  */
@@ -25,7 +25,7 @@ extern "C" {
 typedef enum
 {
   PLAYER_STATE_NO_CARD,    /**< SD card missing or unreadable */
-  PLAYER_STATE_NO_TRACKS,  /**< no playable .wav in /Music    */
+  PLAYER_STATE_NO_TRACKS,  /**< no playable file in /Music    */
   PLAYER_STATE_STOPPED,
   PLAYER_STATE_PLAYING,
   PLAYER_STATE_PAUSED,
@@ -48,9 +48,13 @@ typedef struct
   uint32_t        duration_s;
   uint32_t        sample_rate;
   uint8_t         channels;
+  uint32_t        bitrate_kbps;
+  bool            vbr;
+  char            format[8];     /**< "WAV", "MP3" */
   uint32_t        track_serial;  /**< changes whenever a new track is loaded */
   uint32_t        library_serial;/**< changes whenever the track list is (re)read */
-  char            title[PLAYER_TITLE_MAX];
+  char            title[PLAYER_TITLE_MAX];   /**< tag title, else the file name */
+  char            artist[PLAYER_TITLE_MAX];  /**< tag artist, may be empty       */
   char            message[PLAYER_MESSAGE_MAX]; /**< error / hint for the user, may be empty */
 } player_status_t;
 
