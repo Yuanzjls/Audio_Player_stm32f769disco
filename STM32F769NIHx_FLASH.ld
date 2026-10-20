@@ -16,9 +16,9 @@ MEMORY
 {
   FLASH (rx)       : ORIGIN = 0x08000000, LENGTH = 2048K
   RAM (xrw)        : ORIGIN = 0x20000000, LENGTH = 512K
-  /* SDRAM 0xC0000000..0xC0FFFFFF: LCD frame buffers live at 0xC0400000/0xC0800000,
-     the STemWin heap (aMemory in GUIConf.c) is placed at 0xC0C00000 */
-  GUI_Memory (rw)  : ORIGIN = 0xC0C00000, LENGTH = 4M
+  /* External SDRAM. The MPU maps the first 8 MB write-through cacheable and the
+     rest non-cacheable (see mpu_config() in main.c). */
+  SDRAM (rw)       : ORIGIN = 0xC0000000, LENGTH = 16M
 }
 
 SECTIONS
@@ -119,14 +119,17 @@ SECTIONS
     . = ALIGN(8);
   } >RAM
 
-  /* STemWin heap in external SDRAM. NOLOAD: not initialised by startup code and
-     not part of the flash image (SDRAM is only valid after BSP_SDRAM_Init). */
-  .GUI_NUMBYTES_section (NOLOAD) :
+  /* Frame buffers and the LVGL heap (variables placed with
+     __attribute__((section(".sdram")))). NOLOAD: not initialised by the start-up
+     code and not part of the flash image, since SDRAM only works after
+     BSP_SDRAM_Init(). Users must initialise these variables themselves. */
+  .sdram (NOLOAD) :
   {
-    . = ALIGN(4);
-    *(.GUI_NUMBYTES_section)
-    . = ALIGN(4);
-  } >GUI_Memory
+    . = ALIGN(64);
+    *(.sdram)
+    *(.sdram*)
+    . = ALIGN(64);
+  } >SDRAM
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }

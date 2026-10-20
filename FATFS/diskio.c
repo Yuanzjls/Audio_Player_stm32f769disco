@@ -6,6 +6,8 @@
 /* Only physical drive 0 (the SD card) is supported (FF_VOLUMES = 1).    */
 /*-----------------------------------------------------------------------*/
 
+#include <string.h>
+
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
 #include "stm32f769i_discovery_sd.h"
@@ -17,8 +19,23 @@
 #define SD_TIMEOUT 1000
 #define SD_DEFAULT_BLOCK_SIZE 512
 
+/* Internal SRAM (DTCM + SRAM1/2) is never cached (see the MPU setup in main.c),
+ * so the SD DMA can write there directly. Anything else (e.g. buffers in the
+ * cacheable SDRAM) goes through this bounce buffer. */
+#define DMA_SAFE_START	0x20000000UL
+#define DMA_SAFE_END	0x20080000UL
+#define BOUNCE_SECTORS	8U
+
 /* Given from the SD DMA completion callbacks below */
 static SemaphoreHandle_t xSemaphore;
+
+static BYTE s_bounce[BOUNCE_SECTORS * SD_DEFAULT_BLOCK_SIZE] __attribute__((aligned(32)));
+
+static int is_dma_safe(const void *buff)
+{
+	const uintptr_t addr = (uintptr_t)buff;
+	return (addr & 3U) == 0U && addr >= DMA_SAFE_START && addr < DMA_SAFE_END;
+}
 
 /*-----------------------------------------------------------------------*/
 /* Get Drive Status                                                      */
@@ -55,7 +72,10 @@ DSTATUS disk_initialize (
 	if (pdrv != DEV_MMC) return STA_NOINIT;
 
 	stat = BSP_SD_Init();
-	xSemaphore = xSemaphoreCreateBinary();
+	if (xSemaphore == NULL)
+	{
+		xSemaphore = xSemaphoreCreateBinary();
+	}
 	return stat;
 }
 
@@ -65,19 +85,11 @@ DSTATUS disk_initialize (
 /* Read Sector(s)                                                        */
 /*-----------------------------------------------------------------------*/
 
-DRESULT disk_read (
-	BYTE pdrv,		/* Physical drive nmuber to identify the drive */
-	BYTE *buff,		/* Data buffer to store read data */
-	DWORD sector,	/* Start sector in LBA */
-	UINT count		/* Number of sectors to read */
-)
+/* DMA read into a buffer that is safe for DMA */
+static DRESULT read_blocks_dma(BYTE *buff, DWORD sector, UINT count)
 {
-	DRESULT res;
+	DRESULT res = RES_ERROR;
 	uint32_t timer;
-
-	if (pdrv != DEV_MMC) return RES_PARERR;
-
-	res = RES_ERROR;
 
 	if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
 	(uint32_t) (sector),
@@ -99,6 +111,36 @@ DRESULT disk_read (
 	}
 
 	return res;
+}
+
+DRESULT disk_read (
+	BYTE pdrv,		/* Physical drive nmuber to identify the drive */
+	BYTE *buff,		/* Data buffer to store read data */
+	DWORD sector,	/* Start sector in LBA */
+	UINT count		/* Number of sectors to read */
+)
+{
+	if (pdrv != DEV_MMC) return RES_PARERR;
+
+	if (is_dma_safe(buff))
+	{
+		return read_blocks_dma(buff, sector, count);
+	}
+
+	while (count > 0U)
+	{
+		const UINT n = (count < BOUNCE_SECTORS) ? count : BOUNCE_SECTORS;
+		const DRESULT res = read_blocks_dma(s_bounce, sector, n);
+		if (res != RES_OK)
+		{
+			return res;
+		}
+		memcpy(buff, s_bounce, n * SD_DEFAULT_BLOCK_SIZE);
+		buff   += n * SD_DEFAULT_BLOCK_SIZE;
+		sector += n;
+		count  -= n;
+	}
+	return RES_OK;
 }
 
 
