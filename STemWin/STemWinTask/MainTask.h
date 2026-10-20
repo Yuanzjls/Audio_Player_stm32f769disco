@@ -17,6 +17,7 @@
 #include "EDIT.h"
 #include "FRAMEWIN.h"
 #include "LISTBOX.h"
+#include <stdint.h>
 #include "MULTIEDIT.h"
 #include "RADIO.h"
 #include "SLIDER.h"

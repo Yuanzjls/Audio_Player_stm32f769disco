@@ -39,7 +39,12 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
+
+/* Provided by the FreeRTOS port (port.c) */
+extern void xPortSysTickHandler(void);
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */

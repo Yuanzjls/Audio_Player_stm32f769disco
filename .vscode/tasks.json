@@ -1,0 +1,125 @@
+{
+  // Quick access:
+  //   Status bar buttons (needs the "Tasks" extension, actboy168.tasks):
+  //     Build | Flash | Monitor | Flash+Monitor | Reset
+  //   Ctrl+Shift+B -> Build (Debug)
+  //   Ctrl+Shift+P > "Tasks: Run Task" for everything else
+  // "options.statusbar" is read by the Tasks extension and ignored by VS Code itself.
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "tasks": [
+    {
+      "label": "Configure (Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--preset", "Debug"],
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": []
+    },
+    {
+      "label": "Configure (Release)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--preset", "Release"],
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build (Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Debug"],
+      "dependsOn": "Configure (Debug)",
+      "group": { "kind": "build", "isDefault": true },
+      "options": { "statusbar": { "label": "$(tools) Build", "tooltip": "Build Debug (Ctrl+Shift+B)" } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Build (Release)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Release"],
+      "dependsOn": "Configure (Release)",
+      "group": "build",
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Clean (Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Debug", "--target", "clean"],
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": []
+    },
+    {
+      "label": "Rebuild (Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Debug", "--clean-first"],
+      "dependsOn": "Configure (Debug)",
+      "group": "build",
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Flash (Debug)",
+      "detail": "Build, then program via ST-LINK (OpenOCD / STM32CubeProgrammer)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Debug", "--target", "flash"],
+      "dependsOn": "Configure (Debug)",
+      "group": "test",
+      "options": { "statusbar": { "label": "$(zap) Flash", "tooltip": "Build + flash Debug via ST-LINK" } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Flash (Release)",
+      "detail": "Build, then program via ST-LINK (OpenOCD / STM32CubeProgrammer)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Release", "--target", "flash"],
+      "dependsOn": "Configure (Release)",
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Flash via USB drive (Debug)",
+      "detail": "Build, then copy the .bin to the DIS_F769NI drive (no debug driver needed)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Debug", "--target", "flash_drive"],
+      "dependsOn": "Configure (Debug)",
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Monitor",
+      "detail": "ST-LINK virtual COM port, 9600 7O1 (Ctrl+C to stop)",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/serial_monitor.ps1"],
+      "isBackground": true,
+      "presentation": { "panel": "dedicated", "focus": true, "clear": true },
+      "options": { "statusbar": { "label": "$(plug) Monitor", "tooltip": "Serial monitor on the ST-LINK COM port" } },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build + Flash + Monitor",
+      "dependsOrder": "sequence",
+      "dependsOn": ["Flash (Debug)", "Monitor"],
+      "options": { "statusbar": { "label": "$(rocket) Flash+Monitor", "tooltip": "Build, flash, then open the serial monitor" } },
+      "problemMatcher": []
+    },
+    {
+      "label": "Reset board",
+      "type": "shell",
+      "command": "openocd",
+      "args": ["-f", "board/stm32f769i-disco.cfg", "-c", "init; reset run; exit"],
+      "options": { "statusbar": { "label": "$(debug-restart) Reset", "tooltip": "Reset the MCU via ST-LINK" } },
+      "problemMatcher": []
+    }
+  ]
+}

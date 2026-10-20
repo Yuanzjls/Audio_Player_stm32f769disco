@@ -1,6 +1,10 @@
 #include "ff.h"
 #include "main.h"
 #define CODEPAGE FF_CODE_PAGE
+/* Surrogate helpers (private to ff.c, so redefined here) */
+#define IsSurrogate(c)	((c) >= 0xD800 && (c) <= 0xDFFF)
+#define IsSurrogateH(c)	((c) >= 0xD800 && (c) <= 0xDBFF)
+#define IsSurrogateL(c)	((c) >= 0xDC00 && (c) <= 0xDFFF)
 static const BYTE DbcTbl[] = {0x81, 0xFE, 0x00, 0x00, 0x40, 0x7E, 0x80, 0xFE, 0x00, 0x00};
 static int dbc_1st (BYTE c)
 {

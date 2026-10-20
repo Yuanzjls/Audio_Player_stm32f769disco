@@ -1,0 +1,56 @@
+{
+  // F5 builds (Debug), flashes and stops at main().
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Works with the C/C++ extension (ms-vscode.cpptools) alone
+      "name": "Debug (OpenOCD + GDB)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/Debug/Audio_Player_stm32f769disco.elf",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "Build (Debug)",
+      "MIMode": "gdb",
+      "miDebuggerPath": "arm-none-eabi-gdb",
+      "miDebuggerServerAddress": "localhost:3333",
+      "debugServerPath": "${env:LOCALAPPDATA}/Microsoft/WinGet/Packages/xpack-dev-tools.openocd-xpack_Microsoft.Winget.Source_8wekyb3d8bbwe/xpack-openocd-0.12.0-7/bin/openocd.exe",
+      "debugServerArgs": "-f board/stm32f769i-disco.cfg",
+      "serverStarted": "Listening on port 3333 for gdb connections",
+      "filterStderr": true,
+      "stopAtConnect": false,
+      "postRemoteConnectCommands": [
+        { "text": "monitor reset halt" },
+        { "text": "load" },
+        { "text": "monitor reset halt" },
+        { "text": "tbreak main" }
+      ],
+      "launchCompleteCommand": "exec-continue",
+      "externalConsole": false
+    },
+    {
+      // Nicer embedded debugging (registers, peripherals, RTOS view);
+      // needs the "Cortex-Debug" extension (marus25.cortex-debug)
+      "name": "Debug (Cortex-Debug)",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/Debug/Audio_Player_stm32f769disco.elf",
+      "preLaunchTask": "Build (Debug)",
+      "configFiles": ["board/stm32f769i-disco.cfg"],
+      "runToEntryPoint": "main",
+      "rtos": "FreeRTOS",
+      "showDevDebugOutput": "none"
+    },
+    {
+      "name": "Attach (Cortex-Debug, no flash)",
+      "type": "cortex-debug",
+      "request": "attach",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/Debug/Audio_Player_stm32f769disco.elf",
+      "configFiles": ["board/stm32f769i-disco.cfg"],
+      "rtos": "FreeRTOS"
+    }
+  ]
+}
