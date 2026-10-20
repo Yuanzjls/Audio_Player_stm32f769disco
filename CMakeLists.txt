@@ -14,9 +14,13 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/lvgl/lvgl.h")
-  message(FATAL_ERROR "LVGL is missing. Run: git submodule update --init")
-endif()
+foreach(_sub Middlewares/lvgl Middlewares/FreeRTOS-Kernel Drivers/STM32F7xx_HAL_Driver
+             Drivers/CMSIS/Device/ST/STM32F7xx Drivers/BSP/STM32F769I-Discovery)
+  file(GLOB _sub_files "${CMAKE_CURRENT_SOURCE_DIR}/${_sub}/*")
+  if(NOT _sub_files)
+    message(FATAL_ERROR "${_sub} is empty. Run: git submodule update --init")
+  endif()
+endforeach()
 
 set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32F769NIHx_FLASH.ld")
 
@@ -44,8 +48,8 @@ target_include_directories(board_config INTERFACE
   Drivers/BSP/Components
   Drivers/BSP/Components/Common
   FATFS
-  FREERTOS/include
-  FREERTOS/portable
+  Middlewares/FreeRTOS-Kernel/include
+  Middlewares/FreeRTOS-Kernel/portable/GCC/ARM_CM4F
   Middlewares/lvgl
 )
 
@@ -78,12 +82,16 @@ target_compile_options(lvgl PRIVATE -O2 -w)
 file(GLOB HAL_SOURCES "Drivers/STM32F7xx_HAL_Driver/Src/*.c")
 list(FILTER HAL_SOURCES EXCLUDE REGEX "_template\.c$")
 
-# The BSP LCD and audio drivers are intentionally absent: the display is driven
-# by Board/Src/display.c and the WM8994 codec / SAI by Board/Src/audio_out.c.
-file(GLOB BSP_SOURCES "Drivers/BSP/STM32F769I-Discovery/*.c")
+# Only the BSP parts the player needs. The BSP LCD and audio drivers are not used:
+# the display is driven by Board/Src/display.c and the codec by Board/Src/audio_out.c.
+set(BSP_SOURCES
+  Drivers/BSP/STM32F769I-Discovery/stm32f769i_discovery.c
+  Drivers/BSP/STM32F769I-Discovery/stm32f769i_discovery_sd.c
+  Drivers/BSP/STM32F769I-Discovery/stm32f769i_discovery_sdram.c
+  Drivers/BSP/STM32F769I-Discovery/stm32f769i_discovery_ts.c
+)
 
 set(BSP_COMPONENT_SOURCES
-  Drivers/BSP/Components/adv7533/adv7533.c
   Drivers/BSP/Components/otm8009a/otm8009a.c
   Drivers/BSP/Components/ft6x06/ft6x06.c
   Drivers/BSP/Components/wm8994/wm8994.c
@@ -97,16 +105,17 @@ set(FATFS_SOURCES
   FATFS/ff_readonly.c
 )
 
+# FreeRTOS kernel (submodule). The Cortex-M7 r1p0 in the STM32F769 uses the CM4F port.
+set(FREERTOS_DIR Middlewares/FreeRTOS-Kernel)
 set(FREERTOS_SOURCES
-  FREERTOS/croutine.c
-  FREERTOS/event_groups.c
-  FREERTOS/heap_4.c
-  FREERTOS/list.c
-  FREERTOS/queue.c
-  FREERTOS/stream_buffer.c
-  FREERTOS/tasks.c
-  FREERTOS/timers.c
-  FREERTOS/portable/port.c
+  ${FREERTOS_DIR}/event_groups.c
+  ${FREERTOS_DIR}/list.c
+  ${FREERTOS_DIR}/queue.c
+  ${FREERTOS_DIR}/stream_buffer.c
+  ${FREERTOS_DIR}/tasks.c
+  ${FREERTOS_DIR}/timers.c
+  ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
+  ${FREERTOS_DIR}/portable/MemMang/heap_4.c
 )
 
 file(GLOB APP_SOURCES CONFIGURE_DEPENDS
@@ -116,7 +125,8 @@ file(GLOB APP_SOURCES CONFIGURE_DEPENDS
 )
 
 add_executable(${PROJECT_NAME}
-  startup/startup_stm32f769xx.s
+  Drivers/CMSIS/Device/ST/STM32F7xx/Source/Templates/gcc/startup_stm32f769xx.s
+  Drivers/CMSIS/Device/ST/STM32F7xx/Source/Templates/system_stm32f7xx.c
   ${APP_SOURCES}
   ${HAL_SOURCES}
   ${BSP_SOURCES}

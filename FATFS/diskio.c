@@ -11,6 +11,7 @@
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
 #include "stm32f769i_discovery_sd.h"
+#include "FreeRTOS.h"
 #include "semphr.h"
 
 /* Physical drive number of the SD card */
@@ -86,7 +87,7 @@ DSTATUS disk_initialize (
 /*-----------------------------------------------------------------------*/
 
 /* DMA read into a buffer that is safe for DMA */
-static DRESULT read_blocks_dma(BYTE *buff, DWORD sector, UINT count)
+static DRESULT read_blocks_dma(BYTE *buff, LBA_t sector, UINT count)
 {
 	DRESULT res = RES_ERROR;
 	uint32_t timer;
@@ -116,7 +117,7 @@ static DRESULT read_blocks_dma(BYTE *buff, DWORD sector, UINT count)
 DRESULT disk_read (
 	BYTE pdrv,		/* Physical drive nmuber to identify the drive */
 	BYTE *buff,		/* Data buffer to store read data */
-	DWORD sector,	/* Start sector in LBA */
+	LBA_t sector,	/* Start sector in LBA */
 	UINT count		/* Number of sectors to read */
 )
 {
@@ -154,7 +155,7 @@ DRESULT disk_read (
 DRESULT disk_write (
 	BYTE pdrv,			/* Physical drive nmuber to identify the drive */
 	const BYTE *buff,	/* Data to be written */
-	DWORD sector,		/* Start sector in LBA */
+	LBA_t sector,		/* Start sector in LBA */
 	UINT count			/* Number of sectors to write */
 )
 {
