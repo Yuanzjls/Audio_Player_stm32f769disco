@@ -1,5 +1,6 @@
 # STM32F769 Music Player
 
+[![Build](https://github.com/Yuanzjls/Audio_Player_stm32f769disco/actions/workflows/build.yml/badge.svg)](https://github.com/Yuanzjls/Audio_Player_stm32f769disco/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Yuanzjls/Audio_Player_stm32f769disco)](https://github.com/Yuanzjls/Audio_Player_stm32f769disco/releases/latest)
 ![Board](https://img.shields.io/badge/board-STM32F769I--Discovery-03234B)
 ![LVGL](https://img.shields.io/badge/LVGL-9.6-blue)

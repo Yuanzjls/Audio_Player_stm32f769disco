@@ -1,0 +1,75 @@
+# Builds the firmware on every push and pull request (Debug and Release, kept
+# as downloadable artifacts). A pushed "v*" tag also publishes a GitHub release
+# with the Release firmware attached.
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish releases
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        preset: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0              # tags: the version printed by the firmware
+
+      - name: Install the Arm GNU Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '14.2.Rel1'        # same as for local builds
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build build/${{ matrix.preset }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/Audio_Player_stm32f769disco.bin
+            build/${{ matrix.preset }}/Audio_Player_stm32f769disco.hex
+            build/${{ matrix.preset }}/Audio_Player_stm32f769disco.elf
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-Release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Audio_Player_stm32f769disco.bin
+            Audio_Player_stm32f769disco.hex
+            Audio_Player_stm32f769disco.elf
+          generate_release_notes: true
+          body: |
+            ## Installing
+
+            Connect the board's ST-LINK USB port: a drive named `DIS_F769NI` appears.
+            Copy `Audio_Player_stm32f769disco.bin` onto it; the board programs itself and restarts.
+            (`.hex` / `.elf`: the same firmware for STM32CubeProgrammer, OpenOCD or a debugger.)
+
+            The microSD card needs the songs in `/Music`, and optionally `/font.ttf` for
+            non-Latin titles: see the [README](https://github.com/${{ github.repository }}#sd-card).
