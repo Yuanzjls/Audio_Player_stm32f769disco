@@ -60,6 +60,7 @@ typedef enum
   CMD_SEEK,
   CMD_SET_VOLUME,
   CMD_SET_REPEAT,
+  CMD_SET_SHUFFLE,
 } command_type_t;
 
 typedef struct
@@ -94,6 +95,13 @@ static uint16_t track_count(void);
 /* Library: file names of the playable tracks, sorted. Written once by the
  * player task (scan_library) before track_count is published, read-only after. */
 static char s_names[PLAYER_MAX_TRACKS][PLAYER_TITLE_MAX] __attribute__((section(".sdram")));
+
+/* Shuffle: play order (a permutation of the track indices) and the position in
+ * it of the current track. Player task only. */
+static uint16_t s_order[PLAYER_MAX_TRACKS];
+static uint16_t s_order_len;
+static uint16_t s_order_pos;
+static uint32_t s_random;               /* xorshift32 state, 0 = not seeded yet */
 
 /* DMA buffer: both halves, in uncached DTCM */
 static int16_t s_audio_buf[2 * HALF_SAMPLES] DMA_BUFFER;
@@ -337,6 +345,136 @@ static uint16_t track_index(void)
   return index;
 }
 
+/* ---- play order -------------------------------------------------------------- */
+
+static bool shuffle_enabled(void)
+{
+  status_lock();
+  const bool shuffle = s_status.shuffle;
+  status_unlock();
+  return shuffle;
+}
+
+/* Seed from the hardware RNG (clocked by the 48 MHz PLLQ output) */
+static void random_seed(void)
+{
+  __HAL_RCC_RNG_CLK_ENABLE();
+  RNG->CR |= RNG_CR_RNGEN;
+  for (uint32_t tries = 0; tries < 10000U && s_random == 0U; tries++)
+  {
+    if ((RNG->SR & RNG_SR_DRDY) != 0U)
+    {
+      s_random = RNG->DR;
+    }
+  }
+  RNG->CR &= ~RNG_CR_RNGEN;
+  __HAL_RCC_RNG_CLK_DISABLE();
+
+  if (s_random == 0U)
+  {
+    s_random = (uint32_t)xTaskGetTickCount() | 1U;   /* RNG failed: any non-zero seed */
+  }
+}
+
+/* Uniform enough for n up to PLAYER_MAX_TRACKS */
+static uint32_t random_below(uint32_t n)
+{
+  if (s_random == 0U)
+  {
+    random_seed();
+  }
+  s_random ^= s_random << 13;
+  s_random ^= s_random >> 17;
+  s_random ^= s_random << 5;
+  return s_random % n;
+}
+
+/* New shuffled order starting with @p first, or, if @p first is not a track,
+ * with any track but the current one (so a track never plays twice in a row). */
+static void shuffle_order(uint16_t first)
+{
+  const uint16_t count = track_count();
+  for (uint16_t i = 0; i < count; i++)
+  {
+    s_order[i] = i;
+  }
+  for (uint16_t i = count; i > 1U; i--)
+  {
+    const uint16_t j   = (uint16_t)random_below(i);
+    const uint16_t tmp = s_order[i - 1U];
+    s_order[i - 1U] = s_order[j];
+    s_order[j]      = tmp;
+  }
+
+  if (first < count)
+  {
+    for (uint16_t i = 0; i < count; i++)
+    {
+      if (s_order[i] == first)
+      {
+        s_order[i] = s_order[0];
+        s_order[0] = first;
+        break;
+      }
+    }
+  }
+  else if (count > 1U && s_order[0] == track_index())
+  {
+    s_order[0]         = s_order[count - 1U];
+    s_order[count - 1U] = track_index();
+  }
+  s_order_len = count;
+  s_order_pos = 0;
+}
+
+/* The library may have been re-read since the order was drawn */
+static void check_order(void)
+{
+  if (s_order_len != track_count())
+  {
+    shuffle_order(track_index());
+  }
+}
+
+/* Track after the current one in play order. @p wrapped tells whether the order
+ * starts over (the end of the playlist). */
+static uint16_t following_track(bool *wrapped)
+{
+  const uint16_t count = track_count();
+  if (!shuffle_enabled())
+  {
+    const uint16_t next = (uint16_t)(track_index() + 1U);
+    *wrapped = (next >= count);
+    return *wrapped ? 0U : next;
+  }
+
+  check_order();
+  if ((uint32_t)s_order_pos + 1U < s_order_len)
+  {
+    *wrapped = false;
+    return s_order[++s_order_pos];
+  }
+  *wrapped = true;
+  shuffle_order(UINT16_MAX);
+  return s_order[0];
+}
+
+/* Track before the current one in play order (wrapping around) */
+static uint16_t preceding_track(void)
+{
+  const uint16_t count = track_count();
+  if (!shuffle_enabled())
+  {
+    return (uint16_t)((track_index() + count - 1U) % count);
+  }
+
+  check_order();
+  s_order_pos = (s_order_pos == 0U) ? (uint16_t)(s_order_len - 1U) : (uint16_t)(s_order_pos - 1U);
+  return s_order[s_order_pos];
+}
+
+/* ---- track switching ------------------------------------------------------- */
+
 /* Load @p index and keep playing. Restarts the DMA only if the rate changes. */
 static void play_track(uint16_t index)
 {
@@ -375,12 +513,13 @@ static void on_track_finished(void)
     return;
   }
 
-  const uint16_t next = (uint16_t)(track_index() + 1U);
-  if (next >= track_count())
+  bool wrapped;
+  const uint16_t next = following_track(&wrapped);
+  if (wrapped)
   {
-    /* End of the playlist: stop and rewind to the first track */
+    /* End of the playlist: stop at the first track (of a new order when shuffling) */
     stop_output();
-    open_playable_track(0, track_count());
+    open_playable_track(next, track_count());
     set_state(PLAYER_STATE_STOPPED, NULL);
     return;
   }
@@ -446,7 +585,8 @@ static void handle_command(const command_t *cmd)
     case CMD_NEXT:
       if (has_tracks)
       {
-        skip_to((uint16_t)((track_index() + 1U) % track_count()), state);
+        bool wrapped;
+        skip_to(following_track(&wrapped), state);
       }
       break;
 
@@ -465,8 +605,7 @@ static void handle_command(const command_t *cmd)
         }
         else
         {
-          const uint16_t count = track_count();
-          skip_to((uint16_t)((track_index() + count - 1U) % count), state);
+          skip_to(preceding_track(), state);
         }
       }
       break;
@@ -474,6 +613,10 @@ static void handle_command(const command_t *cmd)
     case CMD_PLAY_INDEX:
       if (has_tracks && cmd->value < track_count())
       {
+        if (shuffle_enabled())
+        {
+          shuffle_order((uint16_t)cmd->value);   /* a new order from the chosen track */
+        }
         skip_to((uint16_t)cmd->value, state);
       }
       break;
@@ -497,6 +640,16 @@ static void handle_command(const command_t *cmd)
       status_lock();
       s_status.repeat = (player_repeat_t)cmd->value;
       status_unlock();
+      break;
+
+    case CMD_SET_SHUFFLE:
+      status_lock();
+      s_status.shuffle = (cmd->value != 0U);
+      status_unlock();
+      if (cmd->value != 0U && has_tracks)
+      {
+        shuffle_order(track_index());   /* the current track stays first */
+      }
       break;
   }
 }
@@ -588,8 +741,14 @@ static void player_task(void *arg)
   mount_card_and_scan();
   wait_for_ui();
 
-  if (open_playable_track(0, track_count()))
+  /* Shuffle (the default) also picks the first song at random */
+  const uint16_t first = shuffle_enabled() ? (uint16_t)random_below(track_count()) : 0U;
+  if (open_playable_track(first, track_count()))
   {
+    if (shuffle_enabled())
+    {
+      shuffle_order(track_index());
+    }
     start_output();
   }
   else
@@ -648,6 +807,7 @@ void player_start(uint8_t initial_volume)
 
   s_status.state  = PLAYER_STATE_NO_CARD;
   s_status.repeat = PLAYER_REPEAT_OFF;
+  s_status.shuffle = true;
   s_status.volume = (initial_volume > 100U) ? 100U : initial_volume;
 
   if (xTaskCreate(player_task, "player", TASK_STACK_WORDS, NULL, TASK_PRIORITY, &s_task) != pdPASS)
@@ -689,6 +849,7 @@ bool player_get_track_name(uint16_t index, char *name, size_t len)
 }
 void player_seek(uint32_t position_s)       { send_command(CMD_SEEK, position_s); }
 void player_set_repeat(player_repeat_t r)   { send_command(CMD_SET_REPEAT, (uint32_t)r); }
+void player_set_shuffle(bool shuffle)       { send_command(CMD_SET_SHUFFLE, shuffle ? 1U : 0U); }
 
 void player_set_volume(uint8_t volume)
 {

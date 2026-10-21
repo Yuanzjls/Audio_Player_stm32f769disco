@@ -41,6 +41,7 @@ typedef struct
 {
   player_state_t  state;
   player_repeat_t repeat;
+  bool            shuffle;       /**< random play order       */
   uint8_t         volume;        /**< 0..100                  */
   uint16_t        track_index;   /**< 0-based                 */
   uint16_t        track_count;
@@ -80,6 +81,13 @@ bool player_get_track_name(uint16_t index, char *name, size_t len);
 void player_seek(uint32_t position_s);
 void player_set_volume(uint8_t volume);
 void player_set_repeat(player_repeat_t repeat);
+
+/**
+ * Random play order on or off (on at start-up, which also picks a random first
+ * song). Every track plays once in a shuffled order
+ * (a new order is drawn when it runs out); previous goes back along it.
+ */
+void player_set_shuffle(bool shuffle);
 
 #ifdef __cplusplus
 }

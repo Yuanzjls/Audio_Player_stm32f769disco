@@ -108,6 +108,8 @@ typedef struct
   lv_obj_t *time_total;
   lv_obj_t *btn_repeat;
   lv_obj_t *btn_repeat_icon;
+  lv_obj_t *btn_shuffle;
+  lv_obj_t *btn_shuffle_icon;
   lv_obj_t *btn_prev;
   lv_obj_t *btn_play;
   lv_obj_t *btn_play_icon;
@@ -230,6 +232,12 @@ static void on_repeat_clicked(lv_event_t *e)
 {
   (void)e;
   player_set_repeat(s_status.repeat == PLAYER_REPEAT_ONE ? PLAYER_REPEAT_OFF : PLAYER_REPEAT_ONE);
+}
+
+static void on_shuffle_clicked(lv_event_t *e)
+{
+  (void)e;
+  player_set_shuffle(!s_status.shuffle);
 }
 
 static void on_track_clicked(lv_event_t *e)
@@ -535,6 +543,11 @@ static void refresh_cb(lv_timer_t *timer)
     lv_obj_set_style_bg_color(s_ui.btn_repeat, repeat_one ? COLOR_ACCENT : COLOR_SURFACE, 0);
     lv_obj_set_style_text_color(s_ui.btn_repeat_icon, repeat_one ? COLOR_ON_ACCENT : COLOR_TEXT, 0);
   }
+  if (first || st.shuffle != s_status.shuffle)
+  {
+    lv_obj_set_style_bg_color(s_ui.btn_shuffle, st.shuffle ? COLOR_ACCENT : COLOR_SURFACE, 0);
+    lv_obj_set_style_text_color(s_ui.btn_shuffle_icon, st.shuffle ? COLOR_ON_ACCENT : COLOR_TEXT, 0);
+  }
 
   /* The exact length of a VBR MP3 may be known only after a while */
   if (has_tracks && st.track_serial == s_status.track_serial && st.duration_s != s_status.duration_s)
@@ -838,7 +851,7 @@ static void build_now_playing(lv_obj_t *scr)
   lv_label_set_text(s_ui.time_total, "00:00");
 
 
-  /* Transport: repeat, previous, play/pause, next */
+  /* Transport: repeat, previous, play/pause, next, shuffle */
   lv_obj_t *row = make_box(panel, COLOR_BG);
   s_ui.transport = row;
   lv_obj_set_height(row, 96);
@@ -863,10 +876,9 @@ static void build_now_playing(lv_obj_t *scr)
                                     &lv_font_montserrat_28, NULL);
   lv_obj_add_event_cb(s_ui.btn_next, on_next_clicked, LV_EVENT_CLICKED, NULL);
 
-  /* Keep the row symmetric around the play button: invisible spacer on the right */
-  lv_obj_t *spacer = make_box(row, COLOR_BG);
-  lv_obj_set_size(spacer, 56, 56);
-  lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+  s_ui.btn_shuffle = make_round_button(row, 56, COLOR_SURFACE, COLOR_TEXT, LV_SYMBOL_SHUFFLE,
+                                       &lv_font_montserrat_20, &s_ui.btn_shuffle_icon);
+  lv_obj_add_event_cb(s_ui.btn_shuffle, on_shuffle_clicked, LV_EVENT_CLICKED, NULL);
 }
 
 static void build_volume(lv_obj_t *panel, uint8_t volume)

@@ -1,7 +1,7 @@
 # STM32F769 Audio (wav) Player
 
 A touch-screen music player for the STM32F769I-Discovery board. It plays `.wav` and `.mp3` files from the
-microSD card through the headphone jack, with play/pause, next, repeat-one, a seek bar, volume
+microSD card through the headphone jack, with play/pause, previous/next, repeat-one, shuffle (on by default, starting at a random song), a seek bar, volume
 control and a 32-band spectrum analyser. The library panel folds away, and a status line shows the
 CPU load and memory use. The UI is built with [LVGL](https://lvgl.io) 9 and runs on FreeRTOS. Song titles in any
 language (e.g. Chinese) are drawn with a TrueType font loaded from the SD card.
