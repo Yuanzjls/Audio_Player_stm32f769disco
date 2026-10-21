@@ -10,6 +10,19 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_EXECUTABLE_SUFFIX ".elf")
 
+# Firmware version, printed at start-up: "git describe" of the source tree when
+# CMake configures (e.g. v2.0.0, or v2.0.0-3-gabc1234-dirty after more changes).
+# Re-run "cmake --preset ..." to refresh it.
+set(FIRMWARE_VERSION "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty --match "v*"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE FIRMWARE_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+message(STATUS "Firmware version: ${FIRMWARE_VERSION}")
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
@@ -163,6 +176,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # MP3 decoder: Layer III only, no SIMD (the Cortex-M7 has no NEON)
 target_compile_definitions(${PROJECT_NAME} PRIVATE MINIMP3_ONLY_MP3 MINIMP3_NO_SIMD)
+# Only main.c uses the version: a new version recompiles just that file
+set_source_files_properties(Core/Src/main.c PROPERTIES COMPILE_DEFINITIONS "FIRMWARE_VERSION=\"${FIRMWARE_VERSION}\"")
 
 # Warnings for our own code
 set_source_files_properties(${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter")

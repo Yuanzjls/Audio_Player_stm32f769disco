@@ -1,11 +1,36 @@
-# STM32F769 Audio (wav) Player
+# STM32F769 Music Player
 
-A touch-screen music player for the STM32F769I-Discovery board. It plays `.wav` and `.mp3` files from the
-microSD card through the headphone jack, with play/pause, previous/next, repeat-one, shuffle (on by default, starting at a random song), a seek bar, volume
-control and a 32-band spectrum analyser. The cover picture embedded in the song is shown, with a
-blurred copy of it behind the player. The library (up to 4096 songs) folds away, and a status line shows the
-CPU load and memory use. The UI is built with [LVGL](https://lvgl.io) 9 and runs on FreeRTOS. Song titles in any
-language (e.g. Chinese) are drawn with a TrueType font loaded from the SD card.
+[![Release](https://img.shields.io/github/v/release/Yuanzjls/Audio_Player_stm32f769disco)](https://github.com/Yuanzjls/Audio_Player_stm32f769disco/releases/latest)
+![Board](https://img.shields.io/badge/board-STM32F769I--Discovery-03234B)
+![LVGL](https://img.shields.io/badge/LVGL-9.6-blue)
+![FreeRTOS](https://img.shields.io/badge/FreeRTOS-11.3-green)
+
+A touch-screen MP3 / WAV player for the STM32F769I-Discovery board: songs from the microSD card,
+sound through the board's audio jack, a [LVGL](https://lvgl.io) 9 user interface on FreeRTOS.
+
+## Features
+
+* **MP3 and WAV**, including variable-bitrate MP3, with title, artist and length from the ID3 tags.
+* **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,
+  with a blurred copy of it behind the player.
+* **Spectrum analyser**: 32 bands, computed live from what is playing (CMSIS-DSP FFT).
+* **Library of up to 4096 songs**, in name order, in a panel that folds away.
+* **Shuffle** (on by default, starting at a random song), repeat-one, previous/next, seek, volume.
+* **Song titles in any language** (e.g. Chinese), with a TrueType font from the SD card.
+* **Low CPU load**: interrupt / DMA driven throughout; about 12 % of the CPU while an MP3 plays
+  with the spectrum, shown on screen with the memory use.
+* **Robust SD-card access**: failed reads are retried, after re-initialising the card if needed.
+
+## Quick start (prebuilt firmware)
+
+1. Download `Audio_Player_stm32f769disco.bin` from the
+   [latest release](https://github.com/Yuanzjls/Audio_Player_stm32f769disco/releases/latest).
+2. Connect the board's ST-LINK USB port to the computer. A drive named `DIS_F769NI`
+   appears: copy the `.bin` onto it. The board programs itself and restarts.
+3. Prepare a microSD card as described in [SD card](#sd-card) below, insert it, and plug
+   headphones or speakers into the board's audio output jack.
+
+The log (version, songs, errors) is on the ST-LINK virtual COM port at 115200 8N1.
 
 Supported files:
 * **WAV**: PCM 16-bit, mono or stereo, 8 – 96 kHz.
@@ -80,6 +105,20 @@ player through `player_*()` commands and reads a status snapshot, so the two nev
 
 ## How it runs
 
+```mermaid
+flowchart LR
+  SD[(microSD)] -- SDMMC2 DMA --> FS[FatFs]
+  FS --> P["player task<br/>MP3 / WAV decoding"]
+  P -- SAI1 DMA --> A["WM8994 codec"] --> J((audio jack))
+  P -- status snapshot --> G["gui task<br/>LVGL"]
+  G -- commands --> P
+  FS --> C["cover task"] <-- DMA --> H["hardware JPEG codec"]
+  C -- cover + backdrop --> G
+  A -. samples about to play .-> S["spectrum FFT"] --> G
+  T["touch FT6x06"] -- interrupt --> G
+  G -- frame buffers in SDRAM --> D["DSI display"]
+```
+
 Everything is interrupt / DMA driven, so the CPU sleeps (`WFI` in the FreeRTOS idle hook) whenever
 there is nothing to do:
 
@@ -117,9 +156,12 @@ the chip drivers (wm8994 v3, otm8009a v2, ...) use a different API and do not fi
 
 ## Demo video
 
-https://www.youtube.com/watch?v=nAqI61Whyyc&feature=youtu.be (STemWin version)
+https://www.youtube.com/watch?v=nAqI61Whyyc&feature=youtu.be (the first, STemWin version of the player)
 
 ## Todo
 
 * Add other formats (FLAC, Ogg Vorbis).
 * Add lyric support.
+* PNG and progressive-JPEG covers (the hardware codec only decodes baseline JPEG).
+* Support the NT35510 panel of later board revisions.
+* Keep the font and images in the board's 64 MB QSPI flash.

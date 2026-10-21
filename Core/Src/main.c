@@ -6,6 +6,10 @@
  */
 #include "main.h"
 
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "unknown"   /* normally set by CMakeLists.txt (git describe) */
+#endif
+
 #include <stdbool.h>
 #include <string.h>
 
@@ -47,7 +51,7 @@ int main(void)
   BSP_LED_Init(LED_GREEN);
 
   log_init();
-  LOG_INFO("Audio player starting (%lu MHz)", (unsigned long)(SystemCoreClock / 1000000U));
+  LOG_INFO("Audio player %s starting (%lu MHz)", FIRMWARE_VERSION, (unsigned long)(SystemCoreClock / 1000000U));
 
   /* Frame buffers and the LVGL heap live in SDRAM */
   if (BSP_SDRAM_Init() != SDRAM_OK)
