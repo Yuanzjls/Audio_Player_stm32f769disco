@@ -20,7 +20,7 @@ jobs:
       matrix:
         preset: [Debug, Release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0              # tags: the version printed by the firmware
@@ -39,7 +39,7 @@ jobs:
       - name: Build
         run: cmake --build build/${{ matrix.preset }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: firmware-${{ matrix.preset }}
           path: |
@@ -53,7 +53,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: firmware-Release
 
