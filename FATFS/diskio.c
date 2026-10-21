@@ -11,6 +11,7 @@
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
 #include "main.h"
+#include "log.h"
 #include "stm32f769i_discovery_sd.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -20,23 +21,28 @@
 #define DEV_MMC		0
 
 #define SD_TIMEOUT 1000
+#define SD_ATTEMPTS 3U		/* a failed transfer is retried this many times in total */
 #define SD_DEFAULT_BLOCK_SIZE 512
 
 /* DTCM is never cached, so the SD DMA can write there directly. Anything else
  * (cacheable SRAM1/2 and SDRAM) goes through this bounce buffer in DTCM. */
 #define DMA_SAFE_START	0x20000000UL
 #define DMA_SAFE_END	0x20020000UL
-#define BOUNCE_SECTORS	8U
+#define BOUNCE_SECTORS	32U		/* 16 KB: few commands per transfer */
 
-/* Given from the SD DMA completion callbacks below */
+/* Given from the SD completion and error callbacks below */
 static SemaphoreHandle_t xSemaphore;
+static volatile uint32_t s_sd_error;	/* HAL error code of the last transfer, 0 = none */
+
+extern SD_HandleTypeDef uSdHandle;		/* BSP */
 
 static BYTE s_bounce[BOUNCE_SECTORS * SD_DEFAULT_BLOCK_SIZE] DMA_BUFFER;
 
-static int is_dma_safe(const void *buff)
+static int is_dma_safe(const void *buff, UINT count)
 {
 	const uintptr_t addr = (uintptr_t)buff;
-	return (addr & 3U) == 0U && addr >= DMA_SAFE_START && addr < DMA_SAFE_END;
+	return (addr & 3U) == 0U && addr >= DMA_SAFE_START &&
+	       addr + (uintptr_t)count * SD_DEFAULT_BLOCK_SIZE <= DMA_SAFE_END;
 }
 
 /*-----------------------------------------------------------------------*/
@@ -104,25 +110,69 @@ static int wait_card_ready(void)
 	return 0;
 }
 
-/* DMA read into a buffer that is safe for DMA */
+/* One DMA read into a buffer that is safe for DMA */
+static DRESULT read_blocks_once(BYTE *buff, LBA_t sector, UINT count)
+{
+	/* Drop a completion left over from an earlier, abandoned transfer */
+	xSemaphoreTake(xSemaphore, 0);
+	s_sd_error = 0;
+
+	if (wait_card_ready() != 0)
+	{
+		return RES_NOTRDY;
+	}
+	if (BSP_SD_ReadBlocks_DMA((uint32_t *)buff, (uint32_t)sector, count) != MSD_OK)
+	{
+		s_sd_error = uSdHandle.ErrorCode;
+		return RES_ERROR;
+	}
+
+	/* Woken by BSP_SD_ReadCpltCallback() or HAL_SD_ErrorCallback() */
+	if (xSemaphoreTake(xSemaphore, pdMS_TO_TICKS(SD_TIMEOUT)) != pdTRUE)
+	{
+		s_sd_error = SDMMC_ERROR_TIMEOUT;
+		return RES_ERROR;
+	}
+	return (s_sd_error == 0U) ? RES_OK : RES_ERROR;
+}
+
+/* DMA read, retried after an error (a CRC error, a FIFO overrun, or a command
+ * the card did not answer). The first retry follows an abort; the last one a
+ * complete re-initialisation of the card. */
 static DRESULT read_blocks_dma(BYTE *buff, LBA_t sector, UINT count)
 {
 	DRESULT res = RES_ERROR;
 
-	if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
-	(uint32_t) (sector),
-	count) == MSD_OK)
+	for (UINT attempt = 1; attempt <= SD_ATTEMPTS; attempt++)
 	{
-		/* Wait for BSP_SD_ReadCpltCallback() */
-		if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
+		const TickType_t start = xTaskGetTickCount();
+		res = read_blocks_once(buff, sector, count);
+		if (res == RES_OK)
 		{
-			if (wait_card_ready() == 0)
+			if (attempt > 1U)
 			{
-				res = RES_OK;
+				LOG_INFO("sd: read of sector %lu ok on attempt %u", (unsigned long)sector, attempt);
+			}
+			break;
+		}
+		LOG_WARN("sd: read of %u sector(s) at %lu failed after %lu ms (error 0x%lx)", count,
+		         (unsigned long)sector, (unsigned long)(xTaskGetTickCount() - start) * portTICK_PERIOD_MS,
+		         (unsigned long)s_sd_error);
+
+		if (attempt + 1U < SD_ATTEMPTS)
+		{
+			HAL_SD_Abort(&uSdHandle);
+		}
+		else if (attempt + 1U == SD_ATTEMPTS)
+		{
+			BSP_SD_DeInit();
+			if (BSP_SD_Init() != MSD_OK)
+			{
+				LOG_ERROR("sd: card re-initialisation failed");
+				break;
 			}
 		}
 	}
-
 	return res;
 }
 
@@ -135,7 +185,7 @@ DRESULT disk_read (
 {
 	if (pdrv != DEV_MMC) return RES_PARERR;
 
-	if (is_dma_safe(buff))
+	if (is_dma_safe(buff, count))
 	{
 		return read_blocks_dma(buff, sector, count);
 	}
@@ -260,6 +310,21 @@ void BSP_SD_WriteCpltCallback(void)
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
 	/* Wake up disk_write() */
+	xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
+
+	portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+/**
+  * @brief SD transfer error (CRC, timeout, FIFO overrun, DMA error): wake the
+  *        waiting task at once instead of letting it time out
+  * @retval None
+  */
+void HAL_SD_ErrorCallback(SD_HandleTypeDef *hsd)
+{
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+	s_sd_error = (hsd->ErrorCode != 0U) ? hsd->ErrorCode : SDMMC_ERROR_GENERAL_UNKNOWN_ERR;
 	xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
 
 	portYIELD_FROM_ISR( xHigherPriorityTaskWoken );

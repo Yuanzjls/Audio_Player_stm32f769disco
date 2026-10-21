@@ -1219,6 +1219,10 @@
 /** Kerning cache size (entries) */
 #define LV_TINY_TTF_CACHE_KERNING_CNT 256
 
+/* The font streams from the SD card: corrupt data (e.g. after a read error)
+ * must not halt the firmware. stb_truetype then just finds no glyph. */
+#define STBTT_assert(x) ((void)0)
+
 #endif /*LV_USE_TINY_TTF*/
 
 
