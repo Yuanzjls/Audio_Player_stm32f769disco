@@ -19,6 +19,9 @@ void fakefs_reset(void);
 /** Add a file (the data is copied). */
 void fakefs_add(const char *path, const void *data, size_t size);
 
+/** Contents of a file (also one written by the code under test); false if none. */
+bool fakefs_get(const char *path, const uint8_t **data, size_t *size);
+
 /** Add a file with the contents of @p host_path; false if it cannot be read. */
 bool fakefs_add_host_file(const char *path, const char *host_path);
 

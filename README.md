@@ -11,6 +11,8 @@ sound through the board's audio jack, a [LVGL](https://lvgl.io) 9 user interface
 
 ## Features
 
+* **Home screen with apps**: Music, System info and Settings, plus a now-playing bar; the
+  music keeps playing outside the Music app (a home button in every app leads back).
 * **MP3 and WAV**, including variable-bitrate MP3, with title, artist and length from the ID3 tags.
 * **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,
   with a blurred copy of it behind the player.
@@ -19,7 +21,9 @@ sound through the board's audio jack, a [LVGL](https://lvgl.io) 9 user interface
 * **Shuffle** (on by default, starting at a random song), repeat-one, previous/next, seek, volume.
 * **Song titles in any language** (e.g. Chinese), with a TrueType font from the SD card.
 * **Low CPU load**: interrupt / DMA driven throughout; about 12 % of the CPU while an MP3 plays
-  with the spectrum, shown on screen with the memory use.
+  with the spectrum. The System info app shows the CPU load, memory, SD card and tasks.
+* **Settings** (volume, screen brightness, shuffle at start, screen off after a while), saved
+  on the SD card.
 * **Robust SD-card access**: failed reads are retried, after re-initialising the card if needed.
 
 ## Quick start (prebuilt firmware)
@@ -52,6 +56,7 @@ revisions ship an NT35510 panel, which the display driver does not support yet.
 /font.ttf         optional: font for the song titles (font.otf / font.ttc also work, for a
                   .ttc collection the first face is used), e.g. Noto Sans SC for Chinese.
                   Without it only Latin titles render.
+/settings.txt     written by the Settings app (key=value lines, can be edited by hand)
 ```
 
 Only distribute fonts whose license allows it; e.g. Microsoft YaHei comes with Windows and is
@@ -93,7 +98,7 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 ## Tests
 
 The board-independent parts (ID3 tags and cover location, WAV and MP3 decoding, the spectrum
-analysis) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
+analysis, the settings file) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
 output (`tests/support/fakes.c`). The MP3 tests decode real files from `tests/fixtures`
 (regenerate them with `make_fixtures.sh`). They need a host C compiler (e.g. gcc; on Windows
 `winget install BrechtSanders.WinLibs.POSIX.UCRT`):
@@ -110,7 +115,7 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures with the hardware JPEG codec), `ui` (LVGL screen) |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures with the hardware JPEG codec), `settings` (settings.txt); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_sysinfo`, `app_settings` |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |

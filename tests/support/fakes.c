@@ -58,6 +58,20 @@ void fakefs_add(const char *path, const void *data, size_t size)
   abort();
 }
 
+bool fakefs_get(const char *path, const uint8_t **data, size_t *size)
+{
+  for (size_t i = 0; i < MAX_FILES; i++)
+  {
+    if (s_files[i].path[0] != '\0' && strcmp(s_files[i].path, path) == 0)
+    {
+      *data = s_files[i].data;
+      *size = s_files[i].size;
+      return true;
+    }
+  }
+  return false;
+}
+
 bool fakefs_add_host_file(const char *path, const char *host_path)
 {
   FILE *f = fopen(host_path, "rb");
@@ -94,8 +108,11 @@ static fake_file_t *file_of(FIL *fp)
 
 FRESULT f_open(FIL *fp, const TCHAR *path, BYTE mode)
 {
-  (void)mode;
   memset(fp, 0, sizeof(*fp));
+  if ((mode & FA_CREATE_ALWAYS) != 0U)
+  {
+    fakefs_add(path, "", 0);            /* new, empty file */
+  }
   for (size_t i = 0; i < MAX_FILES; i++)
   {
     if (s_files[i].path[0] != '\0' && strcmp(s_files[i].path, path) == 0)
@@ -140,6 +157,27 @@ FRESULT f_read(FIL *fp, void *buff, UINT btr, UINT *br)
   memcpy(buff, f->data + fp->fptr, n);
   fp->fptr += n;
   *br = (UINT)n;
+  return FR_OK;
+}
+
+FRESULT f_write(FIL *fp, const void *buff, UINT btw, UINT *bw)
+{
+  fake_file_t *f = file_of(fp);
+  *bw = 0;
+  if (f == NULL)
+  {
+    return FR_INVALID_OBJECT;
+  }
+  const size_t end = (size_t)fp->fptr + btw;
+  if (end > f->size)
+  {
+    f->data = realloc(f->data, end);
+    f->size = end;
+    fp->obj.objsize = end;
+  }
+  memcpy(f->data + fp->fptr, buff, btw);
+  fp->fptr += btw;
+  *bw = btw;
   return FR_OK;
 }
 

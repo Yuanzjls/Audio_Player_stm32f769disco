@@ -60,6 +60,7 @@ add_library(app_under_test STATIC
   ${ROOT}/App/Src/decoder_wav.c
   ${ROOT}/App/Src/decoder_mp3.c
   ${ROOT}/App/Src/spectrum.c
+  ${ROOT}/App/Src/settings.c
   support/fakes.c
   support/check.c
 )
@@ -83,7 +84,7 @@ if(SANITIZE)
 endif()
 
 enable_testing()
-foreach(name id3 wav mp3 spectrum)
+foreach(name id3 wav mp3 spectrum settings)
   add_executable(test_${name} test_${name}.c)
   target_link_libraries(test_${name} PRIVATE app_under_test)
   target_compile_options(test_${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
