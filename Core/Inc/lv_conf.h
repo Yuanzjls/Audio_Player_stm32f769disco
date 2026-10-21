@@ -223,7 +223,7 @@
 #define LV_USE_VECTOR_GRAPHIC 0
 
 /** Render a widget and its children into an image buffer with lv_snapshot_take(). */
-#define LV_USE_SNAPSHOT 0
+#define LV_USE_SNAPSHOT 1
 
 /** Backend that gives the SW renderer vector graphics support. */
 #define LV_USE_THORVG 0

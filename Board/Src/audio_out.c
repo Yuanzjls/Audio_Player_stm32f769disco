@@ -249,6 +249,17 @@ bool audio_out_set_volume(uint8_t volume)
   return err == 0U;
 }
 
+uint32_t audio_out_position(void)
+{
+  if (s_play_buf == NULL || s_play_items == 0U)
+  {
+    return 0;
+  }
+  /* NDTR counts the samples left until the DMA wraps around the buffer */
+  const uint32_t pos = s_play_items - AUDIO_DMA_STREAM->NDTR;
+  return (pos < s_play_items) ? pos / 2U : 0U;
+}
+
 bool audio_out_peek(int16_t *out, uint32_t frames)
 {
   if (!s_running || s_play_buf == NULL || frames * 2U > s_play_items)
@@ -333,7 +344,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef *hsai)
   s_dma.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
   s_dma.Init.MemDataAlignment    = DMA_MDATAALIGN_HALFWORD;
   s_dma.Init.Mode                = DMA_CIRCULAR;
-  s_dma.Init.Priority            = DMA_PRIORITY_HIGH;
+  s_dma.Init.Priority            = DMA_PRIORITY_VERY_HIGH;   /* before the JPEG codec streams on DMA2: an SAI underrun garbles the sound */
   s_dma.Init.FIFOMode            = DMA_FIFOMODE_ENABLE;
   s_dma.Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
   s_dma.Init.MemBurst            = DMA_MBURST_SINGLE;

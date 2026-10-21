@@ -16,8 +16,8 @@ MEMORY
 {
   FLASH (rx)       : ORIGIN = 0x08000000, LENGTH = 2048K
   RAM (xrw)        : ORIGIN = 0x20000000, LENGTH = 512K   /* DTCM 128K + SRAM1 368K + SRAM2 16K */
-  /* External SDRAM. The MPU maps the first 8 MB write-through cacheable and the
-     rest non-cacheable (see mpu_config() in main.c). */
+  /* External SDRAM. The MPU maps all of it write-through cacheable
+     (see mpu_config() in main.c). */
   SDRAM (rw)       : ORIGIN = 0xC0000000, LENGTH = 16M
 }
 

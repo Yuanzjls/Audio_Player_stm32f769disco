@@ -1,22 +1,16 @@
 /**
  * @file  cover_art.c
- * @brief Cover pictures decoded with the STM32F769's hardware JPEG codec.
+ * @brief Cover pictures decoded with the STM32F769's hardware JPEG codec
+ *        (jpeg_hw.c), in a task of its own.
  *
- * Event driven: the codec is fed and drained by DMA (DMA2 stream 3 in, stream
- * 4 out). Its interrupts only swap buffers and wake the cover task, which
- * sleeps in between:
- *  - input: two chunks of the JPEG data, read from the music file by the task
- *    while the codec consumes the other one;
- *  - output: two chunks of YCbCr MCUs (8x8 sample blocks); the task averages
- *    the samples of the centred square crop straight into a COVER_ART_SIZE
- *    grid, so a picture of any size needs only that grid in memory;
- *  - when the task falls behind, the interrupt pauses that side of the codec
- *    and the task resumes it.
+ * The JPEG data is read from the music file as the codec needs it; the decoded
+ * YCbCr samples of the centred square crop are averaged straight into a
+ * COVER_ART_SIZE grid, so a picture of any size needs only that grid in memory.
  * The averages are converted to RGB565 (averaging before the conversion gives
  * the same result, the conversion being linear) with an alpha channel that
  * rounds the corners: an LVGL RGB565A8 image.
- * The DMA buffers are in DTCM, which is never cached. Baseline JPEG only, like
- * the hardware: progressive JPEG and PNG pictures get no cover.
+ * Baseline JPEG only, like the hardware: progressive JPEG and PNG pictures get
+ * no cover.
  */
 #include "cover_art.h"
 
@@ -27,6 +21,7 @@
 #include "queue.h"
 #include "task.h"
 #include "ff.h"
+#include "jpeg_hw.h"
 #include "log.h"
 #include "main.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
@@ -34,12 +29,8 @@
 #define SIZE              COVER_ART_SIZE
 #define CORNER_RADIUS     16
 #define MAX_SIDE          4096U        /* larger pictures are not shown */
-#define IN_CHUNK          4096U
-#define OUT_CHUNK         (768U * 16U) /* whole MCUs of every layout (64/192/256/384 bytes) */
-#define DECODE_TIMEOUT_MS 3000U
 #define TASK_STACK_WORDS  768
 #define TASK_PRIORITY     2            /* above the GUI: it mostly sleeps, and wakes for each chunk */
-#define IRQ_PRIORITY      6
 #define PATH_MAX_LEN      300
 #define NO_CELL           0xFFFFU
 #define BACKDROP_W        COVER_ART_BACKDROP_W
@@ -63,54 +54,18 @@ typedef struct
   uint32_t y, cb, cr, n;
 } cell_t;
 
-/* Layout of the codec output (set up once the JPEG header has been parsed) */
+/* The picture being averaged */
 typedef struct
 {
-  bool     ok;          /* supported picture, samples are being collected */
-  bool     gray;
-  uint32_t mcu_w, mcu_h;
-  uint32_t mcu_bytes;
-  uint32_t y_blocks;    /* 8x8 luma blocks per MCU */
-  uint32_t mcus_per_row;
+  jpeg_hw_layout_t jpeg;
   uint32_t mcu_index;   /* next MCU in the output stream */
   uint32_t grid;        /* cells per side of the averaging grid */
-  uint32_t width, height;
 } layout_t;
 
-/* A DMA buffer and how much of it is valid (0 = empty / free) */
-typedef struct
-{
-  uint8_t *data;
-  volatile uint32_t len;
-} chunk_t;
-
 static QueueHandle_t      s_requests;
-static TaskHandle_t       s_task;
-static JPEG_HandleTypeDef s_jpeg;
-static DMA_HandleTypeDef  s_dma_in;
-static DMA_HandleTypeDef  s_dma_out;
-
-/* DMA buffers: DTCM, uncached */
-static uint8_t s_in_mem[2][IN_CHUNK] DMA_BUFFER;
-static uint8_t s_out_mem[2][OUT_CHUNK] DMA_BUFFER;
-static chunk_t s_in[2]  = { { s_in_mem[0], 0 }, { s_in_mem[1], 0 } };
-static chunk_t s_out[2] = { { s_out_mem[0], 0 }, { s_out_mem[1], 0 } };
-
-/* Shared between the interrupts and the task (changed with interrupts masked) */
-static volatile uint8_t s_in_read;       /* input chunk the codec reads   */
-static volatile uint8_t s_out_write;     /* output chunk the codec writes */
-static volatile bool    s_in_paused;
-static volatile bool    s_out_paused;
-static volatile bool    s_info_ready;
-static volatile bool    s_finished;      /* decoded, or failed            */
-static volatile bool    s_failed;
-static JPEG_ConfTypeDef s_info;
-
 /* Task only */
 static FIL      s_file;
-static uint32_t s_in_left;
-static uint8_t  s_in_fill;               /* input chunk the task fills next  */
-static uint8_t  s_out_read;              /* output chunk the task takes next */
+static uint32_t s_in_left;               /* bytes of the picture not read yet */
 static layout_t s_layout;
 static cell_t   s_cells[SIZE * SIZE] __attribute__((section(".sdram"), aligned(4)));
 static uint16_t s_map_x[MAX_SIDE];
@@ -162,177 +117,45 @@ static void build_alpha(void)
   }
 }
 
-static void dma_init(DMA_HandleTypeDef *dma, DMA_Stream_TypeDef *stream, uint32_t direction)
-{
-  dma->Instance                 = stream;
-  dma->Init.Channel             = DMA_CHANNEL_9;
-  dma->Init.Direction           = direction;
-  dma->Init.PeriphInc           = DMA_PINC_DISABLE;
-  dma->Init.MemInc              = DMA_MINC_ENABLE;
-  dma->Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
-  dma->Init.MemDataAlignment    = DMA_MDATAALIGN_WORD;
-  dma->Init.Mode                = DMA_NORMAL;
-  dma->Init.Priority            = DMA_PRIORITY_HIGH;
-  dma->Init.FIFOMode            = DMA_FIFOMODE_ENABLE;
-  dma->Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
-  dma->Init.MemBurst            = DMA_MBURST_INC4;
-  dma->Init.PeriphBurst         = DMA_PBURST_INC4;
-  HAL_DMA_DeInit(dma);
-  HAL_DMA_Init(dma);
-}
-
-void HAL_JPEG_MspInit(JPEG_HandleTypeDef *hjpeg)
-{
-  __HAL_RCC_JPEG_CLK_ENABLE();
-  __HAL_RCC_DMA2_CLK_ENABLE();
-
-  dma_init(&s_dma_in, DMA2_Stream3, DMA_MEMORY_TO_PERIPH);
-  __HAL_LINKDMA(hjpeg, hdmain, s_dma_in);
-  dma_init(&s_dma_out, DMA2_Stream4, DMA_PERIPH_TO_MEMORY);
-  __HAL_LINKDMA(hjpeg, hdmaout, s_dma_out);
-
-  HAL_NVIC_SetPriority(JPEG_IRQn, IRQ_PRIORITY, 0);
-  HAL_NVIC_EnableIRQ(JPEG_IRQn);
-  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, IRQ_PRIORITY, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
-  HAL_NVIC_SetPriority(DMA2_Stream4_IRQn, IRQ_PRIORITY, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream4_IRQn);
-}
-
-void JPEG_IRQHandler(void)          { HAL_JPEG_IRQHandler(&s_jpeg); }
-void DMA2_Stream3_IRQHandler(void)  { HAL_DMA_IRQHandler(s_jpeg.hdmain); }
-void DMA2_Stream4_IRQHandler(void)  { HAL_DMA_IRQHandler(s_jpeg.hdmaout); }
-
-/* ---- codec callbacks (interrupt context: swap buffers, wake the task) -------- */
-
-static void wake_task_from_isr(void)
-{
-  BaseType_t woken = pdFALSE;
-  vTaskNotifyGiveFromISR(s_task, &woken);
-  portYIELD_FROM_ISR(woken);
-}
-
-void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hjpeg, JPEG_ConfTypeDef *info)
-{
-  (void)hjpeg;
-  s_info       = *info;
-  s_info_ready = true;
-  wake_task_from_isr();
-}
-
-/* The codec has consumed the input chunk: go on with the other one */
-void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hjpeg, uint32_t consumed)
-{
-  (void)consumed;
-  s_in[s_in_read].len = 0;
-  s_in_read ^= 1U;
-  if (s_in[s_in_read].len != 0U)
-  {
-    HAL_JPEG_ConfigInputBuffer(hjpeg, s_in[s_in_read].data, s_in[s_in_read].len);
-  }
-  else
-  {
-    HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_INPUT);   /* resumed by the task */
-    s_in_paused = true;
-  }
-  wake_task_from_isr();
-}
-
-/* An output chunk is full (or the last, partial one): continue in the other */
-void HAL_JPEG_DataReadyCallback(JPEG_HandleTypeDef *hjpeg, uint8_t *data, uint32_t len)
-{
-  (void)data;
-  s_out[s_out_write].len = len;
-  s_out_write ^= 1U;
-  if (s_out[s_out_write].len != 0U)
-  {
-    HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);  /* resumed by the task */
-    s_out_paused = true;
-  }
-  HAL_JPEG_ConfigOutputBuffer(hjpeg, s_out[s_out_write].data, OUT_CHUNK);
-  wake_task_from_isr();
-}
-
-void HAL_JPEG_DecodeCpltCallback(JPEG_HandleTypeDef *hjpeg)
-{
-  (void)hjpeg;
-  s_finished = true;
-  wake_task_from_isr();
-}
-
-void HAL_JPEG_ErrorCallback(JPEG_HandleTypeDef *hjpeg)
-{
-  (void)hjpeg;
-  s_failed   = true;
-  s_finished = true;
-  wake_task_from_isr();
-}
-
 /* ---- task side ----------------------------------------------------------------- */
 
-/* Read the next piece of the JPEG data into an empty input chunk */
-static void fill_input(void)
+/* jpeg_hw: the next piece of the picture's data from the music file */
+static uint32_t read_picture(void *ctx, uint8_t *buf, uint32_t max)
 {
-  chunk_t *c = &s_in[s_in_fill];
-  if (c->len != 0U || s_in_left == 0U)
-  {
-    return;
-  }
+  (void)ctx;
   UINT got = 0;
-  const UINT want = (s_in_left < IN_CHUNK) ? (UINT)s_in_left : (UINT)IN_CHUNK;
-  if (f_read(&s_file, c->data, want, &got) != FR_OK || got == 0U)
+  const UINT want = (s_in_left < max) ? (UINT)s_in_left : (UINT)max;
+  if (want == 0U || f_read(&s_file, buf, want, &got) != FR_OK)
   {
     s_in_left = 0;
-    return;
+    return 0;
   }
   s_in_left -= got;
-  /* The codec takes whole words: pad the end of the data */
-  const uint32_t padded = (got + 3U) & ~3U;
-  memset(&c->data[got], 0, padded - got);
-  c->len = padded;
-  s_in_fill ^= 1U;
+  return got;
 }
 
-static void setup_layout(const JPEG_ConfTypeDef *info)
+/* jpeg_hw: header parsed: set up the averaging grid */
+static bool begin_picture(void *ctx, const jpeg_hw_layout_t *jl)
 {
+  (void)ctx;
   layout_t *l = &s_layout;
   memset(l, 0, sizeof(*l));
-  l->width  = info->ImageWidth;
-  l->height = info->ImageHeight;
+  l->jpeg = *jl;
 
-  if (info->ColorSpace == JPEG_GRAYSCALE_COLORSPACE)
+  const uint32_t pad_w = jl->mcus_per_row * jl->mcu_w;
+  const uint32_t pad_h = (jl->height + jl->mcu_h - 1U) / jl->mcu_h * jl->mcu_h;
+  if (pad_w > MAX_SIDE || pad_h > MAX_SIDE)
   {
-    l->gray = true; l->mcu_w = 8; l->mcu_h = 8; l->y_blocks = 1; l->mcu_bytes = 64;
+    LOG_WARN("cover: %lux%lu picture not supported", (unsigned long)jl->width, (unsigned long)jl->height);
+    return false;
   }
-  else if (info->ColorSpace == JPEG_YCBCR_COLORSPACE)
-  {
-    switch (info->ChromaSubsampling)
-    {
-      case JPEG_420_SUBSAMPLING: l->mcu_w = 16; l->mcu_h = 16; l->y_blocks = 4; break;
-      case JPEG_422_SUBSAMPLING: l->mcu_w = 16; l->mcu_h = 8;  l->y_blocks = 2; break;
-      default:                   l->mcu_w = 8;  l->mcu_h = 8;  l->y_blocks = 1; break;
-    }
-    l->mcu_bytes = (l->y_blocks + 2U) * 64U;
-  }
-  else
-  {
-    LOG_WARN("cover: CMYK picture not supported");
-    return;
-  }
-
-  const uint32_t pad_w = (l->width + l->mcu_w - 1U) / l->mcu_w * l->mcu_w;
-  const uint32_t pad_h = (l->height + l->mcu_h - 1U) / l->mcu_h * l->mcu_h;
-  if (l->width == 0U || l->height == 0U || pad_w > MAX_SIDE || pad_h > MAX_SIDE)
-  {
-    LOG_WARN("cover: %lux%lu picture not supported", (unsigned long)l->width, (unsigned long)l->height);
-    return;
-  }
-  l->mcus_per_row = pad_w / l->mcu_w;
+  const uint32_t width  = jl->width;
+  const uint32_t height = jl->height;
 
   /* Centred square crop, averaged into grid x grid cells */
-  const uint32_t side = (l->width < l->height) ? l->width : l->height;
-  const uint32_t x0   = (l->width - side) / 2U;
-  const uint32_t y0   = (l->height - side) / 2U;
+  const uint32_t side = (width < height) ? width : height;
+  const uint32_t x0   = (width - side) / 2U;
+  const uint32_t y0   = (height - side) / 2U;
   l->grid = (side < SIZE) ? side : SIZE;
 
   for (uint32_t x = 0; x < pad_w; x++)
@@ -344,24 +167,25 @@ static void setup_layout(const JPEG_ConfTypeDef *info)
     s_map_y[y] = (y >= y0 && y < y0 + side) ? (uint16_t)((y - y0) * l->grid / side) : NO_CELL;
   }
   memset(s_cells, 0, sizeof(cell_t) * l->grid * l->grid);
-  l->ok = true;
+  return true;
 }
 
 /* Add the samples of one MCU to the cells they fall into */
 static void collect_mcu(const uint8_t *mcu)
 {
   const layout_t *l = &s_layout;
-  const uint32_t mx = (l->mcu_index % l->mcus_per_row) * l->mcu_w;
-  const uint32_t my = (l->mcu_index / l->mcus_per_row) * l->mcu_h;
-  const uint8_t *cb = mcu + l->y_blocks * 64U;
+  const jpeg_hw_layout_t *j = &l->jpeg;
+  const uint32_t mx = (l->mcu_index % j->mcus_per_row) * j->mcu_w;
+  const uint32_t my = (l->mcu_index / j->mcus_per_row) * j->mcu_h;
+  const uint8_t *cb = mcu + j->y_blocks * 64U;
   const uint8_t *cr = cb + 64U;
-  const uint32_t blocks_per_row = l->mcu_w / 8U;
+  const uint32_t blocks_per_row = j->mcu_w / 8U;
 
   if (my >= MAX_SIDE)
   {
     return;
   }
-  for (uint32_t py = 0; py < l->mcu_h; py++)
+  for (uint32_t py = 0; py < j->mcu_h; py++)
   {
     const uint16_t cy = s_map_y[my + py];
     if (cy == NO_CELL)
@@ -369,7 +193,7 @@ static void collect_mcu(const uint8_t *mcu)
       continue;
     }
     cell_t *row = &s_cells[cy * l->grid];
-    for (uint32_t px = 0; px < l->mcu_w; px++)
+    for (uint32_t px = 0; px < j->mcu_w; px++)
     {
       const uint16_t cx = s_map_x[mx + px];
       if (cx == NO_CELL)
@@ -379,10 +203,10 @@ static void collect_mcu(const uint8_t *mcu)
       const uint32_t block = (py / 8U) * blocks_per_row + px / 8U;
       cell_t *c = &row[cx];
       c->y += mcu[block * 64U + (py % 8U) * 8U + (px % 8U)];
-      if (!l->gray)
+      if (!j->gray)
       {
         /* Chroma: one 8x8 block covering the whole MCU */
-        const uint32_t ci = (py * 8U / l->mcu_h) * 8U + (px * 8U / l->mcu_w);
+        const uint32_t ci = (py * 8U / j->mcu_h) * 8U + (px * 8U / j->mcu_w);
         c->cb += cb[ci];
         c->cr += cr[ci];
       }
@@ -391,42 +215,15 @@ static void collect_mcu(const uint8_t *mcu)
   }
 }
 
-/* Average the full output chunks, in order, and hand them back to the codec */
-static void drain_output(void)
+/* jpeg_hw: decoded MCUs: add them to the grid */
+static void picture_mcus(void *ctx, const uint8_t *data, uint32_t len)
 {
-  while (s_out[s_out_read].len != 0U)
+  (void)ctx;
+  for (uint32_t i = 0; i + s_layout.jpeg.mcu_bytes <= len; i += s_layout.jpeg.mcu_bytes)
   {
-    chunk_t *c = &s_out[s_out_read];
-    layout_t *l = &s_layout;
-    if (l->ok)
-    {
-      for (uint32_t i = 0; i + l->mcu_bytes <= c->len; i += l->mcu_bytes)
-      {
-        collect_mcu(&c->data[i]);
-        l->mcu_index++;
-      }
-    }
-    c->len = 0;
-    s_out_read ^= 1U;
+    collect_mcu(&data[i]);
+    s_layout.mcu_index++;
   }
-}
-
-/* Resume a side of the codec that the interrupt paused, once it can go on */
-static void resume_codec(void)
-{
-  taskENTER_CRITICAL();
-  if (s_out_paused && s_out[s_out_write].len == 0U)
-  {
-    s_out_paused = false;
-    HAL_JPEG_Resume(&s_jpeg, JPEG_PAUSE_RESUME_OUTPUT);
-  }
-  if (s_in_paused && s_in[s_in_read].len != 0U)
-  {
-    s_in_paused = false;
-    HAL_JPEG_ConfigInputBuffer(&s_jpeg, s_in[s_in_read].data, s_in[s_in_read].len);
-    HAL_JPEG_Resume(&s_jpeg, JPEG_PAUSE_RESUME_INPUT);
-  }
-  taskEXIT_CRITICAL();
 }
 
 static inline uint8_t clamp8(int32_t v)
@@ -449,8 +246,8 @@ static void render(uint8_t index)
       const cell_t *c = &row[tx * l->grid / SIZE];
       const int32_t n  = (c->n != 0U) ? (int32_t)c->n : 1;
       const int32_t y  = (int32_t)c->y / n;
-      const int32_t cb = l->gray ? 0 : (int32_t)c->cb / n - 128;
-      const int32_t cr = l->gray ? 0 : (int32_t)c->cr / n - 128;
+      const int32_t cb = l->jpeg.gray ? 0 : (int32_t)c->cb / n - 128;
+      const int32_t cr = l->jpeg.gray ? 0 : (int32_t)c->cr / n - 128;
       /* BT.601 full range, 16.16 fixed point */
       const uint8_t r = clamp8(y + ((91881 * cr) >> 16));
       const uint8_t g = clamp8(y - ((22554 * cb + 46802 * cr) >> 16));
@@ -538,18 +335,6 @@ static void render_backdrop(uint8_t index)
   }
 }
 
-/* Stop the codec and its DMA, and start again from a clean state (after an
- * error, a timeout, or a picture that is not supported) */
-static void reset_codec(void)
-{
-  HAL_JPEG_Abort(&s_jpeg);
-  HAL_JPEG_DeInit(&s_jpeg);
-  if (HAL_JPEG_Init(&s_jpeg) != HAL_OK)
-  {
-    LOG_ERROR("cover: JPEG codec re-initialisation failed");
-  }
-}
-
 /* Decode the picture of @p req into image @p index */
 static bool decode(const request_t *req, uint8_t index)
 {
@@ -557,74 +342,23 @@ static bool decode(const request_t *req, uint8_t index)
   {
     return false;   /* PNG, none, or no file */
   }
-  memset(&s_layout, 0, sizeof(s_layout));
-  s_in[0].len = s_in[1].len = 0;
-  s_out[0].len = s_out[1].len = 0;
-  s_in_read = s_in_fill = 0;
-  s_out_write = s_out_read = 0;
-  s_in_paused = s_out_paused = false;
-  s_info_ready = s_finished = s_failed = false;
-  s_in_left = req->size;
-  (void)ulTaskNotifyTake(pdTRUE, 0);
-
   bool ok = false;
   if (f_lseek(&s_file, req->offset) == FR_OK)
   {
-    fill_input();
-    fill_input();
-  }
-  if (s_in[0].len != 0U)
-  {
+    s_in_left = req->size;
+    memset(&s_layout, 0, sizeof(s_layout));
+    const jpeg_hw_job_t job = { read_picture, begin_picture, picture_mcus, NULL };
     const TickType_t start = xTaskGetTickCount();
-    if (HAL_JPEG_Decode_DMA(&s_jpeg, s_in[0].data, s_in[0].len, s_out[0].data, OUT_CHUNK) == HAL_OK)
+    if (jpeg_hw_decode(&job) == JPEG_HW_OK && s_layout.mcu_index > 0U)
     {
-      bool timed_out   = false;
-      bool rejected    = false;
-      bool layout_done = false;
-      while (!s_finished)
-      {
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(DECODE_TIMEOUT_MS)) == 0U)
-        {
-          timed_out = true;
-          break;
-        }
-        /* Once per picture: an unsupported one stops the decoding at once */
-        if (s_info_ready && !layout_done)
-        {
-          layout_done = true;
-          setup_layout(&s_info);
-          if (!s_layout.ok)
-          {
-            rejected = true;
-            break;
-          }
-        }
-        drain_output();
-        fill_input();
-        resume_codec();
-      }
-      drain_output();   /* the last chunk */
-
-      if (timed_out || s_failed || rejected)
-      {
-        if (!rejected)
-        {
-          LOG_WARN("cover: JPEG decoding %s (error 0x%lx)", timed_out ? "timed out" : "failed",
-                   (unsigned long)HAL_JPEG_GetError(&s_jpeg));
-        }
-        reset_codec();
-      }
-      else if (s_layout.ok && s_layout.mcu_index > 0U)
-      {
-        render(index);
-        /* The backdrop takes a while: let the GUI run meanwhile */
-        vTaskPrioritySet(NULL, BACKDROP_PRIORITY);
-        render_backdrop(index);
-        vTaskPrioritySet(NULL, TASK_PRIORITY);
-        ok = true;
-        LOG_INFO("cover: %lux%lu JPEG in %lu ms", (unsigned long)s_layout.width,
-                 (unsigned long)s_layout.height, (unsigned long)(xTaskGetTickCount() - start));
-      }
+      render(index);
+      /* The backdrop takes a while: let the GUI run meanwhile */
+      vTaskPrioritySet(NULL, BACKDROP_PRIORITY);
+      render_backdrop(index);
+      vTaskPrioritySet(NULL, TASK_PRIORITY);
+      ok = true;
+      LOG_INFO("cover: %lux%lu JPEG in %lu ms", (unsigned long)s_layout.jpeg.width,
+               (unsigned long)s_layout.jpeg.height, (unsigned long)(xTaskGetTickCount() - start));
     }
   }
   f_close(&s_file);
@@ -687,15 +421,9 @@ void cover_art_init(uint32_t backdrop_tint)
 
   s_requests = xQueueCreate(1, sizeof(request_t));
   configASSERT(s_requests != NULL);
-  if (xTaskCreate(cover_task, "cover", TASK_STACK_WORDS, NULL, TASK_PRIORITY, &s_task) != pdPASS)
+  if (xTaskCreate(cover_task, "cover", TASK_STACK_WORDS, NULL, TASK_PRIORITY, NULL) != pdPASS)
   {
     configASSERT(0);
-  }
-
-  s_jpeg.Instance = JPEG;
-  if (HAL_JPEG_Init(&s_jpeg) != HAL_OK)
-  {
-    LOG_ERROR("cover: JPEG codec initialisation failed");
   }
 }
 

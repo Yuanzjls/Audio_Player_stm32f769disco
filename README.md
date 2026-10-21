@@ -6,13 +6,18 @@
 ![LVGL](https://img.shields.io/badge/LVGL-9.6-blue)
 ![FreeRTOS](https://img.shields.io/badge/FreeRTOS-11.3-green)
 
-A touch-screen MP3 / WAV player for the STM32F769I-Discovery board: songs from the microSD card,
-sound through the board's audio jack, a [LVGL](https://lvgl.io) 9 user interface on FreeRTOS.
+A touch-screen MP3 / WAV player and MJPEG video player for the STM32F769I-Discovery board: songs
+and videos from the microSD card, sound through the board's audio jack, a [LVGL](https://lvgl.io) 9
+user interface on FreeRTOS.
 
 ## Features
 
-* **Home screen with apps**: Music, System info and Settings, plus a now-playing bar; the
+* **Home screen with apps**: Music, Video, System info and Settings, plus a now-playing bar; the
   music keeps playing outside the Music app (a home button in every app leads back).
+* **Video player**: MJPEG AVI files with PCM (WAV) or MP3 sound, full screen at up to 800 x 480,
+  30 fps (about 67 % CPU). Frames are timed by the audio clock, so picture and sound stay in sync;
+  a frame that comes too late is dropped. A tap shows the controls over the playing video (pause,
+  seek, back, home, an fps / decode time / CPU overlay).
 * **MP3 and WAV**, including variable-bitrate MP3, with title, artist and length from the ID3 tags.
 * **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,
   with a blurred copy of it behind the player.
@@ -44,6 +49,18 @@ Supported files:
   "Artist - Title" file names. The cover is the embedded ID3 picture (baseline JPEG; PNG and
   progressive JPEG get a placeholder). The length is exact from a Xing/VBRI header, or measured by a
   background scan while the song plays.
+* **AVI video**: MJPEG (baseline JPEG frames, any chroma subsampling; 4:2:0 is the fastest),
+  up to 800 x 480 (larger pictures are cut to their middle, smaller ones centred on black), with
+  16-bit PCM or MP3 sound, or none. Seeking needs the `idx1` index that FFmpeg writes. To convert
+  a video with [FFmpeg](https://ffmpeg.org):
+
+  ```sh
+  ffmpeg -i input.mp4 -vf "scale=800:480:force_original_aspect_ratio=decrease,fps=25" \
+         -c:v mjpeg -q:v 5 -c:a pcm_s16le -ar 44100 output.avi
+  ```
+
+  Use `-c:a libmp3lame -b:a 128k` for MP3 sound (smaller files). Frame rate and picture size set
+  the CPU load: an 800 x 480 frame takes about 21 ms to convert to RGB.
 
 Hardware: STM32F769I-Discovery with the OTM8009A display (MB1166 revisions up to A-08). Later
 revisions ship an NT35510 panel, which the display driver does not support yet.
@@ -53,6 +70,7 @@ revisions ship an NT35510 panel, which the display driver does not support yet.
 ```
 /Music/*.wav      songs (.wav, .mp3), listed and played in name order
 /Music/*.mp3
+/Avi/*.avi        videos for the Video app
 /font.ttf         optional: font for the song titles (font.otf / font.ttc also work, for a
                   .ttc collection the first face is used), e.g. Noto Sans SC for Chinese.
                   Without it only Latin titles render.
@@ -98,7 +116,7 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 ## Tests
 
 The board-independent parts (ID3 tags and cover location, WAV and MP3 decoding, the spectrum
-analysis, the settings file) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
+analysis, the settings file, the AVI parser and the YCbCr to RGB conversion) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
 output (`tests/support/fakes.c`). The MP3 tests decode real files from `tests/fixtures`
 (regenerate them with `make_fixtures.sh`). They need a host C compiler (e.g. gcc; on Windows
 `winget install BrechtSanders.WinLibs.POSIX.UCRT`):
@@ -115,7 +133,7 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures with the hardware JPEG codec), `settings` (settings.txt); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_sysinfo`, `app_settings` |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_sysinfo`, `app_settings` |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
@@ -125,6 +143,8 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 Tasks: `player` (priority 3) streams audio; `gui` (priority 1) runs LVGL. The UI only talks to the
 player through `player_*()` commands and reads a status snapshot, so the two never share state directly.
+For video, `vread` (priority 3) reads the AVI ahead into frame slots and an audio ring, and `vshow`
+(priority 1, sharing the CPU with the GUI) decodes each frame when the audio clock reaches it.
 
 ## How it runs
 
@@ -151,6 +171,7 @@ there is nothing to do:
 | SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA buffers live in DTCM, which is never cached; reads into other (cached) memory go through a bounce buffer there. A failed read is retried, after re-initialising the card if needed. |
 | Display | DSI adapted command mode: on the panel's tearing-effect interrupt the finished LVGL frame (double-buffered in SDRAM) is sent in 4 tear-free stripes. Nothing is sent while the screen is unchanged, and LVGL sleeps (instead of spinning) until a frame buffer is free again. |
 | Cover | The hardware JPEG codec, fed and drained by DMA; its interrupts wake the `cover` task, which averages the output into the 160 px cover and renders the blurred backdrop. |
+| Video | The same codec decodes each frame; the CPU converts its YCbCr output to RGB565 (two pixels per SIMD instruction) straight into the free frame buffer, which is shown on the next tearing-effect interrupt. LVGL does not draw meanwhile: the controls are rendered off screen and blended onto the frames. The audio DMA interrupt refills its buffer from the ring and counts what has played: that is the clock. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
 | Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
 

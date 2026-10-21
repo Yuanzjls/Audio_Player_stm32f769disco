@@ -185,6 +185,8 @@ set_source_files_properties(${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-We
 set_source_files_properties(App/Src/minimp3_impl.c PROPERTIES COMPILE_OPTIONS "-O3;-w")
 # Runs ~30 times a second: optimised in Debug builds too
 set_source_files_properties(App/Src/spectrum.c PROPERTIES COMPILE_OPTIONS "-O2;-Wall;-Wextra;-Wno-unused-parameter")
+# Every pixel of every video frame: optimised in Debug builds too
+set_source_files_properties(App/Src/yuv2rgb.c PROPERTIES COMPILE_OPTIONS "-O3;-Wall;-Wextra;-Wno-unused-parameter")
 
 target_link_options(${PROJECT_NAME} PRIVATE
   -T${LINKER_SCRIPT}

@@ -33,8 +33,8 @@
 #define CPU_PERIOD_TICKS   4          /* CPU load over 4 x 250 ms */
 #define SWITCH_ANIM_MS     150
 
-#define TILE_SIZE          200
-#define TILE_GAP           48
+#define TILE_SIZE          168
+#define TILE_GAP           32
 #define TILE_Y             112
 #define BAR_HEIGHT         88
 #define BAR_MARGIN         32
@@ -44,7 +44,7 @@
 #define TITLE_FONT_SIZE    32
 #define TEXT_FONT_SIZE     22
 
-static const app_t *const k_apps[] = { &app_music, &app_sysinfo, &app_settings };
+static const app_t *const k_apps[] = { &app_music, &app_video, &app_sysinfo, &app_settings };
 #define APP_COUNT (sizeof(k_apps) / sizeof(k_apps[0]))
 
 static const char *const k_font_paths[] = { "S:/font.ttf", "S:/font.otf", "S:/font.ttc" };
@@ -299,7 +299,7 @@ static void build_tile(lv_obj_t *home, const app_t *app, int32_t x)
 
   lv_obj_t *circle = make_box(tile, lv_color_hex(app->color));
   lv_obj_set_size(circle, 96, 96);
-  lv_obj_align(circle, LV_ALIGN_TOP_MID, 0, 28);
+  lv_obj_align(circle, LV_ALIGN_TOP_MID, 0, 20);
   lv_obj_set_style_radius(circle, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_clickable(circle, false);
 
@@ -309,7 +309,7 @@ static void build_tile(lv_obj_t *home, const app_t *app, int32_t x)
 
   lv_obj_t *name = make_label(tile, &lv_font_montserrat_20, COLOR_TEXT);
   lv_label_set_text(name, app->name);
-  lv_obj_align(name, LV_ALIGN_BOTTOM_MID, 0, -24);
+  lv_obj_align(name, LV_ALIGN_BOTTOM_MID, 0, -18);
 }
 
 static void on_bar_clicked(lv_event_t *e)   { (void)e; shell_open(&app_music); }

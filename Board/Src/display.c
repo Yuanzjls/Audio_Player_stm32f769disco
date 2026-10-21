@@ -13,6 +13,8 @@
  * The panel keeps the last image, so nothing is sent while the UI is idle.
  * Panel commands (brightness, display on/off) are sent by the GUI task between
  * frame transfers: while one is being sent, the TE interrupt starts no transfer.
+ * Video mode: LVGL is paused and the video player writes its frames straight
+ * into the two frame buffers, handing each finished one to the TE interrupt.
  */
 #include "display.h"
 
@@ -61,6 +63,7 @@ static uint16_t s_fb[2][DISPLAY_WIDTH * DISPLAY_HEIGHT]
 
 static uint16_t *volatile s_pending_fb;  /* rendered by LVGL, waiting for TE */
 static uint16_t *volatile s_active_fb;   /* currently sent to / shown by the panel */
+static uint16_t          *s_lvgl_last;   /* last buffer LVGL flushed: it draws into the other next */
 static volatile bool      s_release_lvgl;/* pending buffer came from a flush */
 static SemaphoreHandle_t  s_flush_done;  /* given when LVGL may draw again */
 
@@ -69,6 +72,7 @@ static SemaphoreHandle_t  s_flush_done;  /* given when LVGL may draw again */
 static volatile bool      s_refreshing;  /* a multi-zone DSI transfer is running */
 static volatile bool      s_cmd_busy;    /* a panel command is being sent: no transfer starts */
 static bool               s_on = true;
+static volatile bool      s_video;       /* video mode: frames come from display_video_present() */
 static uint8_t            s_brightness = 0x7F;   /* as set by OTM8009A_Init() */
 
 /* DCS commands (MIPI Display Command Set) */
@@ -320,6 +324,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 
   /* flush_ready is signalled from the TE interrupt once this buffer is on its way */
   __disable_irq();
+  s_lvgl_last    = (uint16_t *)px_map;
   s_pending_fb   = (uint16_t *)px_map;
   s_release_lvgl = true;
   __enable_irq();
@@ -429,21 +434,96 @@ void display_set_on(bool on)
   {
     send_panel_command(DCS_DISPLAY_ON, false, 0);
     send_panel_command(DCS_WRITE_BRIGHTNESS, true, s_brightness);
-    /* Nothing was drawn while off: draw everything again */
-    lv_display_enable_invalidation(s_disp, true);
-    lv_obj_invalidate(lv_screen_active());
+    /* Nothing was drawn while off: draw everything again (in video mode,
+     * display_video_end() does that) */
+    if (!s_video)
+    {
+      lv_display_enable_invalidation(s_disp, true);
+      lv_obj_invalidate(lv_screen_active());
+    }
   }
   else
   {
     send_panel_command(DCS_WRITE_BRIGHTNESS, true, 0);
     send_panel_command(DCS_DISPLAY_OFF, false, 0);
-    lv_display_enable_invalidation(s_disp, false);   /* no rendering for a dark screen */
+    if (!s_video)
+    {
+      lv_display_enable_invalidation(s_disp, false);   /* no rendering for a dark screen */
+    }
   }
 }
 
 bool display_is_on(void)
 {
   return s_on;
+}
+
+/* ---- video mode ---------------------------------------------------------- */
+
+void display_video_begin(void)
+{
+  /* What LVGL has not drawn yet is drawn now, then it draws nothing (its
+   * invalidation is off: here unless the screen is, see display_set_on); its
+   * last frame may still be on its way */
+  lv_refr_now(s_disp);
+  if (s_on)
+  {
+    lv_display_enable_invalidation(s_disp, false);
+  }
+  while (s_release_lvgl || s_pending_fb != NULL)
+  {
+    vTaskDelay(1);
+  }
+  s_video = true;
+}
+
+uint16_t *display_video_frame(void)
+{
+  /* The buffer that is neither on screen nor waiting to be: wait while the
+   * previous frame is still pending (it becomes the one on screen) */
+  while (s_pending_fb != NULL)
+  {
+    vTaskDelay(1);
+  }
+  return (s_active_fb == s_fb[0]) ? s_fb[1] : s_fb[0];
+}
+
+void display_video_present(uint16_t *frame)
+{
+  __DSB();                 /* all pixel writes reach SDRAM before the transfer */
+  s_pending_fb = frame;    /* sent on the next TE */
+}
+
+const uint16_t *display_video_shown(void)
+{
+  return s_active_fb;
+}
+
+void display_video_end(void)
+{
+  while (s_pending_fb != NULL)
+  {
+    vTaskDelay(1);
+  }
+  /* LVGL draws next into the buffer it did not flush last: if that is the one
+   * on screen, the last frame moves to the other one first */
+  if (s_active_fb != s_lvgl_last)
+  {
+    uint16_t *other = (s_active_fb == s_fb[0]) ? s_fb[1] : s_fb[0];
+    memcpy(other, (const uint16_t *)s_active_fb, sizeof(s_fb[0]));
+    display_video_present(other);
+    while (s_pending_fb != NULL)
+    {
+      vTaskDelay(1);
+    }
+  }
+  s_video = false;
+  /* Both buffers hold video: LVGL draws the whole screen again */
+  if (s_on)
+  {
+    lv_display_enable_invalidation(s_disp, true);
+  }
+  lv_obj_invalidate(lv_screen_active());
 }
 
 void display_dsi_irq_handler(void)

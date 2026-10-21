@@ -25,3 +25,10 @@ ffmpeg $Q -f lavfi -i "sine=frequency=1000:sample_rate=44100:duration=1" -i cove
   -metadata title="Test Title" -metadata artist="Test Artist" \
   -metadata:s:v comment="Cover (front)" -disposition:v attached_pic tagged_cover.mp3
 rm cover.jpg
+
+# AVI: MJPEG video (96x64) with 16-bit PCM audio, with MP3 audio, and without audio
+ffmpeg $Q -f lavfi -i "testsrc=size=96x64:rate=10:duration=2" -f lavfi -i "sine=frequency=440:sample_rate=8000:duration=2" \
+  -map 0:v -map 1:a -c:v mjpeg -q:v 8 -pix_fmt yuvj420p -c:a pcm_s16le -ac 1 mjpeg_pcm_96x64.avi
+ffmpeg $Q -f lavfi -i "testsrc=size=96x64:rate=12:duration=2" -f lavfi -i "sine=frequency=440:sample_rate=22050:duration=2" \
+  -map 0:v -map 1:a -c:v mjpeg -q:v 8 -pix_fmt yuvj420p -c:a libmp3lame -b:a 32k -ac 1 mjpeg_mp3_96x64.avi
+ffmpeg $Q -f lavfi -i "testsrc=size=96x64:rate=10:duration=1" -c:v mjpeg -q:v 8 -pix_fmt yuvj420p mjpeg_silent_96x64.avi

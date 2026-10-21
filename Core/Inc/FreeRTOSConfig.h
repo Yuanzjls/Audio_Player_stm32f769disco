@@ -69,7 +69,10 @@ tick off. */
 #define configUSE_TICKLESS_IDLE					0
 
 /* Run time stats gathering definitions. */
-#define configGENERATE_RUN_TIME_STATS	0
+#define configGENERATE_RUN_TIME_STATS	1
+/* Time base: TIM2, free-running at 1 MHz (started by sysmon_init(), see sysmon.c) */
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()
+#define portGET_RUN_TIME_COUNTER_VALUE()	(*(volatile uint32_t *)0x40000024UL)   /* TIM2->CNT */
 
 /* This demo makes use of one or more example stats formatting functions.  These
 format the raw data provided by the uxTaskGetSystemState() function in to human

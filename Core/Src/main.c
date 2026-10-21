@@ -19,6 +19,8 @@
 
 #include "display.h"
 #include "i2c_bus.h"
+#include "jpeg_hw.h"
+#include "video_player.h"
 #include "log.h"
 #include "lv_fs_sd.h"
 #include "player.h"
@@ -113,6 +115,8 @@ static void gui_task(void *arg)
   {
     LOG_ERROR("touch input unavailable");
   }
+  jpeg_hw_init();
+  video_init();
   shell_init();
 
   /* Draw the first frame now, then let the music start */
@@ -143,8 +147,8 @@ static void gui_task(void *arg)
  * Memory attributes:
  *  - DTCM:        never cached (holds the DMA buffers, see DMA_BUFFER in main.h)
  *  - SRAM1/SRAM2: default map, write-back cacheable (task stacks, RTOS heap)
- *  - SDRAM:       first 8 MB write-through cacheable (frame buffers, LVGL heap),
- *                 the rest not cacheable
+ *  - SDRAM:       all 16 MB write-through cacheable (frame buffers, LVGL heap,
+ *                 video buffers); the rest of the bank area strongly ordered
  *  - QSPI area:   strongly ordered, no access (not used, avoids speculative reads)
  */
 static void mpu_config(void)
@@ -169,7 +173,7 @@ static void mpu_config(void)
 
   region.Number       = MPU_REGION_NUMBER3;
   region.BaseAddress  = 0xC0000000;
-  region.Size         = MPU_REGION_SIZE_8MB;
+  region.Size         = MPU_REGION_SIZE_16MB;
   region.IsCacheable  = MPU_ACCESS_CACHEABLE;   /* write-through (TEX 0, C=1, B=0) */
   HAL_MPU_ConfigRegion(&region);
 

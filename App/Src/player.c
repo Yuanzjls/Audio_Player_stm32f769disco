@@ -62,6 +62,7 @@ typedef enum
   CMD_SET_VOLUME,
   CMD_SET_REPEAT,
   CMD_SET_SHUFFLE,
+  CMD_RELEASE_AUDIO,
 } command_type_t;
 
 typedef struct
@@ -82,6 +83,7 @@ typedef struct
 static TaskHandle_t      s_task;
 static QueueHandle_t     s_cmd_queue;
 static SemaphoreHandle_t s_status_mutex;
+static SemaphoreHandle_t s_audio_released;   /* given once the output is stopped for another user */
 static player_status_t   s_status;      /* guarded by s_status_mutex */
 
 static FATFS   s_fs;
@@ -660,6 +662,20 @@ static void handle_command(const command_t *cmd)
         shuffle_order(track_index());   /* the current track stays first */
       }
       break;
+
+    case CMD_RELEASE_AUDIO:
+      /* Another player (video) takes the audio output: stop, keep the track
+       * open (play continues from here), and tell the caller */
+      if (s_output_rate != 0U)
+      {
+        stop_output();
+      }
+      if (state == PLAYER_STATE_PLAYING || state == PLAYER_STATE_PAUSED)
+      {
+        set_state(PLAYER_STATE_STOPPED, NULL);
+      }
+      xSemaphoreGive(s_audio_released);
+      break;
   }
 }
 
@@ -825,6 +841,8 @@ void player_start(uint8_t initial_volume)
 {
   s_status_mutex = xSemaphoreCreateMutex();
   s_cmd_queue    = xQueueCreate(CMD_QUEUE_LENGTH, sizeof(command_t));
+  s_audio_released = xSemaphoreCreateBinary();
+  configASSERT(s_audio_released != NULL);
   configASSERT(s_status_mutex != NULL && s_cmd_queue != NULL);
 
   s_status.state  = PLAYER_STATE_NO_CARD;
@@ -886,6 +904,13 @@ bool player_get_track_path(uint16_t index, char *path, size_t len)
 void player_seek(uint32_t position_s)       { send_command(CMD_SEEK, position_s); }
 void player_set_repeat(player_repeat_t r)   { send_command(CMD_SET_REPEAT, (uint32_t)r); }
 void player_set_shuffle(bool shuffle)       { send_command(CMD_SET_SHUFFLE, shuffle ? 1U : 0U); }
+
+bool player_release_audio(void)
+{
+  (void)xSemaphoreTake(s_audio_released, 0);
+  send_command(CMD_RELEASE_AUDIO, 0);
+  return xSemaphoreTake(s_audio_released, pdMS_TO_TICKS(1000)) == pdTRUE;
+}
 
 void player_set_volume(uint8_t volume)
 {

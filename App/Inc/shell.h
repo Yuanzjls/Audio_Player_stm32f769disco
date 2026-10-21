@@ -30,6 +30,7 @@ typedef struct
 } app_t;
 
 extern const app_t app_music;
+extern const app_t app_video;
 extern const app_t app_sysinfo;
 extern const app_t app_settings;
 

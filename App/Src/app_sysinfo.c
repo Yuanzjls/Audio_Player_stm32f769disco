@@ -18,7 +18,7 @@
 #define REFRESH_MS   1000
 #define PAD          32
 #define COL_W        (800 / 2 - PAD - PAD / 2)
-#define MAX_TASKS    10
+#define MAX_TASKS    12
 #define NAME_W       150          /* the value starts after the name column */
 
 typedef struct

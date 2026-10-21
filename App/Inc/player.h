@@ -97,6 +97,13 @@ void player_set_repeat(player_repeat_t repeat);
  */
 void player_set_shuffle(bool shuffle);
 
+/**
+ * Hand the audio output to another player (the video player): the music
+ * stops (play resumes it where it was). Waits until the output is free;
+ * false if the player did not answer.
+ */
+bool player_release_audio(void);
+
 #ifdef __cplusplus
 }
 #endif

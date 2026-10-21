@@ -54,6 +54,9 @@ bool audio_out_set_volume(uint8_t volume);
  */
 bool audio_out_peek(int16_t *out, uint32_t frames);
 
+/** Stereo frames of the buffer played since the DMA last wrapped around it. */
+uint32_t audio_out_position(void);
+
 /** To be called from DMA2_Stream6_IRQHandler */
 void audio_out_dma_irq_handler(void);
 
