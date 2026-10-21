@@ -1,8 +1,9 @@
 # STM32F769 Audio (wav) Player
 
 A touch-screen music player for the STM32F769I-Discovery board. It plays `.wav` and `.mp3` files from the
-microSD card through the headphone jack, with play/pause, next, repeat-one, a seek bar and volume
-control. The UI is built with [LVGL](https://lvgl.io) 9 and runs on FreeRTOS. Song titles in any
+microSD card through the headphone jack, with play/pause, next, repeat-one, a seek bar, volume
+control and a 32-band spectrum analyser. The library panel folds away, and a status line shows the
+CPU load and memory use. The UI is built with [LVGL](https://lvgl.io) 9 and runs on FreeRTOS. Song titles in any
 language (e.g. Chinese) are drawn with a TrueType font loaded from the SD card.
 
 Supported files:
@@ -65,10 +66,10 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `ui` (LVGL screen) |
-| `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART) |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `ui` (LVGL screen) |
+| `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
-| `Middlewares/` | LVGL and the FreeRTOS kernel (submodules) |
+| `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
 | `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied) |
 | `FATFS/` | FatFs, with the SD-card glue in `diskio.c` and the settings in `ffconf.h` |
 
@@ -82,11 +83,14 @@ there is nothing to do:
 
 | Part | Mechanism |
 |---|---|
-| Audio | SAI1 circular DMA; half/full-transfer interrupts wake the `player` task to decode the next half (MP3 decoding takes ~8 % CPU). Clocked from PLLI2S for the exact 44.1 kHz or 48 kHz family. |
-| SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA into cacheable SDRAM goes through an uncached bounce buffer. |
-| Display | DSI adapted command mode: on the panel's tearing-effect interrupt the finished LVGL frame (double-buffered in SDRAM) is sent in 4 tear-free stripes. Nothing is sent while the screen is unchanged. |
+| Audio | SAI1 circular DMA; half/full-transfer interrupts wake the `player` task to decode the next half (MP3 decoding takes ~6 % CPU). Clocked from PLLI2S for the exact 44.1 kHz or 48 kHz family. |
+| SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA buffers live in DTCM, which is never cached; reads into other (cached) memory go through a bounce buffer there. |
+| Display | DSI adapted command mode: on the panel's tearing-effect interrupt the finished LVGL frame (double-buffered in SDRAM) is sent in 4 tear-free stripes. Nothing is sent while the screen is unchanged, and LVGL sleeps (instead of spinning) until a frame buffer is free again. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
 | Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
+
+The status line measures the CPU load as the share of time not spent in that `WFI` (timed with TIM2).
+While an MP3 plays with the spectrum it reads about 12 %.
 
 Codec volume changes (a few I2C writes) and the UART log stay blocking: they are short and rare.
 
@@ -96,6 +100,7 @@ Codec volume changes (a few I2C writes) and the UART log stay blocking: they are
 |---|---|---|
 | LVGL | 9.6.0 | submodule `Middlewares/lvgl` |
 | minimp3 | commit ea99364 (2026-07-27) | submodule `Middlewares/minimp3` (public domain) |
+| CMSIS-DSP | v1.18.0 | submodule `Middlewares/CMSIS-DSP` (FFT for the spectrum) |
 | FreeRTOS kernel | V11.3.1 | submodule `Middlewares/FreeRTOS-Kernel` (port `GCC/ARM_CM4F`) |
 | STM32F7 HAL | v1.3.3 | submodule `Drivers/STM32F7xx_HAL_Driver` |
 | CMSIS device F7 | v1.2.10 | submodule `Drivers/CMSIS/Device/ST/STM32F7xx` (startup + system files) |
@@ -115,4 +120,3 @@ https://www.youtube.com/watch?v=nAqI61Whyyc&feature=youtu.be (STemWin version)
 
 * Add other formats (FLAC, Ogg Vorbis).
 * Add lyric support.
-* Add frequency spectrum

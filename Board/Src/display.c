@@ -17,6 +17,8 @@
 #include <string.h>
 
 #include "main.h"
+#include "FreeRTOS.h"
+#include "semphr.h"
 #include "otm8009a/otm8009a.h"
 
 #define ZONES        4
@@ -57,6 +59,10 @@ static uint16_t s_fb[2][DISPLAY_WIDTH * DISPLAY_HEIGHT]
 static uint16_t *volatile s_pending_fb;  /* rendered by LVGL, waiting for TE */
 static uint16_t *volatile s_active_fb;   /* currently sent to / shown by the panel */
 static volatile bool      s_release_lvgl;/* pending buffer came from a flush */
+static SemaphoreHandle_t  s_flush_done;  /* given when LVGL may draw again */
+
+/* Upper bound for one wait (normally released within one refresh, ~17-33 ms) */
+#define FLUSH_WAIT_TIMEOUT_MS 100
 static volatile bool      s_refreshing;  /* a multi-zone DSI transfer is running */
 static volatile uint32_t  s_next_zone;
 
@@ -276,6 +282,17 @@ static void ltdc_select_zone(uint32_t zone)
 
 /* ---- LVGL glue ------------------------------------------------------------ */
 
+/* LVGL would otherwise spin in a busy loop until the frame buffer is released:
+ * sleep instead until the TE interrupt hands the buffer back. */
+static void flush_wait_cb(lv_display_t *disp)
+{
+  (void)disp;
+  while (s_release_lvgl)
+  {
+    xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(FLUSH_WAIT_TIMEOUT_MS));
+  }
+}
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
   (void)area;
@@ -340,6 +357,9 @@ lv_display_t *display_init(void)
   lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
   lv_display_set_buffers(s_disp, s_fb[0], s_fb[1], sizeof(s_fb[0]), LV_DISPLAY_RENDER_MODE_DIRECT);
   lv_display_set_flush_cb(s_disp, flush_cb);
+  s_flush_done = xSemaphoreCreateBinary();
+  configASSERT(s_flush_done != NULL);
+  lv_display_set_flush_wait_cb(s_disp, flush_wait_cb);
   return s_disp;
 }
 
@@ -370,6 +390,9 @@ void HAL_DSI_TearingEffectCallback(DSI_HandleTypeDef *hdsi)
   {
     s_release_lvgl = false;
     lv_display_flush_ready(s_disp);
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_flush_done, &woken);
+    portYIELD_FROM_ISR(woken);
   }
 }
 

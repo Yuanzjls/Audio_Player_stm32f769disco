@@ -15,7 +15,7 @@ _Min_Stack_Size = 0x2000;
 MEMORY
 {
   FLASH (rx)       : ORIGIN = 0x08000000, LENGTH = 2048K
-  RAM (xrw)        : ORIGIN = 0x20000000, LENGTH = 512K
+  RAM (xrw)        : ORIGIN = 0x20000000, LENGTH = 512K   /* DTCM 128K + SRAM1 368K + SRAM2 16K */
   /* External SDRAM. The MPU maps the first 8 MB write-through cacheable and the
      rest non-cacheable (see mpu_config() in main.c). */
   SDRAM (rw)       : ORIGIN = 0xC0000000, LENGTH = 16M
@@ -82,6 +82,18 @@ SECTIONS
     KEEP (*(.fini_array*))
     PROVIDE_HIDDEN (__fini_array_end = .);
   } >FLASH
+
+  /* DMA buffers (DMA_BUFFER in main.h). First in RAM so they land in DTCM,
+     which the CPU never caches: DMA needs no cache maintenance there. NOLOAD:
+     not zeroed by the start-up code. */
+  .dma_buffer (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.dma_buffer)
+    *(.dma_buffer*)
+    . = ALIGN(32);
+  } >RAM
+  ASSERT(ADDR(.dma_buffer) + SIZEOF(.dma_buffer) <= 0x20020000, "DMA buffers must fit in DTCM")
 
   /* used by the startup to initialize data */
   _sidata = LOADADDR(.data);

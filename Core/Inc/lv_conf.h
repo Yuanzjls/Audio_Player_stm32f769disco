@@ -19,7 +19,7 @@
 
 /*----------------------------------------------------------------------------
  * Audio player (STM32F769I-Discovery). This is LVGL 9.6.0's lv_conf_template.h
- * with these changes: RGB565, 4 MB heap in SDRAM, Montserrat 20/28/40,
+ * with these changes: RGB565, 4 MB heap in SDRAM, Montserrat 14/20/28/40,
  * light theme, log + assert, TinyTTF (1024 glyph cache); the "S:" drive is
  * Board/Src/lv_fs_sd.c (FatFs with fast seek) instead of LVGL's FatFs driver,
  * no examples/demos.

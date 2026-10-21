@@ -12,6 +12,10 @@ extern "C" {
 #include "stm32f7xx_hal.h"
 #include "stm32f769i_discovery.h"
 
+/* Places a DMA buffer in DTCM, which is never cached (see the linker script).
+ * Contents are not zeroed at start-up. */
+#define DMA_BUFFER __attribute__((section(".dma_buffer"), aligned(32)))
+
 /* USART1 on PA9/PA10 is wired to the ST-LINK virtual COM port (used for logging) */
 #define USARTx                           USART1
 #define USARTx_CLK_ENABLE()              __HAL_RCC_USART1_CLK_ENABLE()

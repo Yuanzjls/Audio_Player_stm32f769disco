@@ -47,6 +47,13 @@ void audio_out_stop(void);
 /** @p volume is 0..100 */
 bool audio_out_set_volume(uint8_t volume);
 
+/**
+ * Copy the next @p frames stereo frames the DMA is about to play (starting at
+ * its current position), e.g. for a spectrum display. Returns false when no
+ * audio is playing (stopped or paused).
+ */
+bool audio_out_peek(int16_t *out, uint32_t frames);
+
 /** To be called from DMA2_Stream6_IRQHandler */
 void audio_out_dma_irq_handler(void);
 

@@ -34,6 +34,11 @@ static DMA_HandleTypeDef     s_dma;
 static audio_out_callback_t  s_callback;
 static bool                  s_codec_ready;
 
+/* Buffer being played (for audio_out_peek) */
+static const int16_t        *s_play_buf;
+static uint32_t              s_play_items;     /* int16 samples in the whole buffer */
+static volatile bool         s_running;        /* DMA running and not paused */
+
 static const uint32_t k_supported_rates[] =
 {
   8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 96000,
@@ -183,7 +188,10 @@ bool audio_out_start(int16_t *buffer, uint32_t size_bytes)
   wm8994_drv.Play(AUDIO_I2C_ADDRESS, (uint16_t *)buffer, (uint16_t)items);
   i2c_bus_unlock();
 
-  return HAL_SAI_Transmit_DMA(&s_sai, (uint8_t *)buffer, (uint16_t)items) == HAL_OK;
+  s_play_buf   = buffer;
+  s_play_items = items;
+  s_running    = (HAL_SAI_Transmit_DMA(&s_sai, (uint8_t *)buffer, (uint16_t)items) == HAL_OK);
+  return s_running;
 }
 
 bool audio_out_pause(void)
@@ -195,6 +203,7 @@ bool audio_out_pause(void)
   i2c_bus_lock();
   wm8994_drv.Pause(AUDIO_I2C_ADDRESS);
   i2c_bus_unlock();
+  s_running = false;
   return HAL_SAI_DMAPause(&s_sai) == HAL_OK;
 }
 
@@ -207,7 +216,8 @@ bool audio_out_resume(void)
   i2c_bus_lock();
   wm8994_drv.Resume(AUDIO_I2C_ADDRESS);
   i2c_bus_unlock();
-  return HAL_SAI_DMAResume(&s_sai) == HAL_OK;
+  s_running = (HAL_SAI_DMAResume(&s_sai) == HAL_OK);
+  return s_running;
 }
 
 void audio_out_stop(void)
@@ -216,6 +226,7 @@ void audio_out_stop(void)
   {
     return;
   }
+  s_running = false;
   HAL_SAI_DMAStop(&s_sai);
   i2c_bus_lock();
   wm8994_drv.Stop(AUDIO_I2C_ADDRESS, CODEC_PDWN_SW);
@@ -236,6 +247,30 @@ bool audio_out_set_volume(uint8_t volume)
   const uint32_t err = wm8994_drv.SetVolume(AUDIO_I2C_ADDRESS, volume);
   i2c_bus_unlock();
   return err == 0U;
+}
+
+bool audio_out_peek(int16_t *out, uint32_t frames)
+{
+  if (!s_running || s_play_buf == NULL || frames * 2U > s_play_items)
+  {
+    return false;
+  }
+  /* NDTR counts the samples left until the DMA wraps around the buffer */
+  const uint32_t remaining = AUDIO_DMA_STREAM->NDTR;
+  uint32_t pos = (s_play_items - remaining) & ~1U;   /* stereo frame aligned */
+  if (pos >= s_play_items)
+  {
+    pos = 0;
+  }
+  for (uint32_t i = 0; i < frames * 2U; i++)
+  {
+    out[i] = s_play_buf[pos];
+    if (++pos == s_play_items)
+    {
+      pos = 0;
+    }
+  }
+  return true;
 }
 
 void audio_out_dma_irq_handler(void)

@@ -18,6 +18,7 @@
 #include "log.h"
 #include "lv_fs_sd.h"
 #include "player.h"
+#include "sysmon.h"
 #include "stm32f769i_discovery_sdram.h"
 #include "touch.h"
 #include "ui.h"
@@ -40,6 +41,7 @@ int main(void)
 
   HAL_Init();
   system_clock_config();
+  sysmon_init();
 
   BSP_LED_Init(LED_RED);
   BSP_LED_Init(LED_GREEN);
@@ -130,7 +132,8 @@ static void gui_task(void *arg)
 
 /**
  * Memory attributes:
- *  - SRAM1/SRAM2: not cacheable, so DMA buffers (audio, SD card) need no cache maintenance
+ *  - DTCM:        never cached (holds the DMA buffers, see DMA_BUFFER in main.h)
+ *  - SRAM1/SRAM2: default map, write-back cacheable (task stacks, RTOS heap)
  *  - SDRAM:       first 8 MB write-through cacheable (frame buffers, LVGL heap),
  *                 the rest not cacheable
  *  - QSPI area:   strongly ordered, no access (not used, avoids speculative reads)
@@ -145,15 +148,6 @@ static void mpu_config(void)
   region.AccessPermission = MPU_REGION_FULL_ACCESS;
   region.DisableExec      = MPU_INSTRUCTION_ACCESS_ENABLE;
   region.SubRegionDisable = 0x00;
-
-  region.Number       = MPU_REGION_NUMBER1;
-  region.BaseAddress  = 0x20020000;
-  region.Size         = MPU_REGION_SIZE_512KB;
-  region.TypeExtField = MPU_TEX_LEVEL1;
-  region.IsCacheable  = MPU_ACCESS_NOT_CACHEABLE;
-  region.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  region.IsShareable  = MPU_ACCESS_SHAREABLE;
-  HAL_MPU_ConfigRegion(&region);
 
   region.Number       = MPU_REGION_NUMBER2;
   region.BaseAddress  = 0xC0000000;
@@ -271,11 +265,11 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 /* ---- power / blocking waits ------------------------------------------------ */
 
-/* Nothing to run: stop the core until the next interrupt (tick, DMA, touch...) */
+/* Nothing to run: stop the core until the next interrupt (tick, DMA, touch...),
+ * measuring the sleep time for the CPU load display */
 void vApplicationIdleHook(void)
 {
-  __DSB();
-  __WFI();
+  sysmon_idle();
 }
 
 /**

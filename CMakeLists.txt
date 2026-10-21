@@ -14,7 +14,8 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-foreach(_sub Middlewares/lvgl Middlewares/FreeRTOS-Kernel Middlewares/minimp3 Drivers/STM32F7xx_HAL_Driver
+foreach(_sub Middlewares/lvgl Middlewares/FreeRTOS-Kernel Middlewares/minimp3 Middlewares/CMSIS-DSP
+             Drivers/STM32F7xx_HAL_Driver
              Drivers/CMSIS/Device/ST/STM32F7xx Drivers/BSP/STM32F769I-Discovery)
   file(GLOB _sub_files "${CMAKE_CURRENT_SOURCE_DIR}/${_sub}/*")
   if(NOT _sub_files)
@@ -75,6 +76,23 @@ add_library(lvgl STATIC ${LVGL_SOURCES})
 target_link_libraries(lvgl PRIVATE board_config)
 # Speed matters more than debuggability inside LVGL, even in Debug builds
 target_compile_options(lvgl PRIVATE -O2 -w)
+
+# ---------------------------------------------------------------------------
+# CMSIS-DSP (submodule): only the FFT and complex-math groups are needed
+# (spectrum display); unused functions and tables are removed by the linker.
+# ---------------------------------------------------------------------------
+set(CMSIS_DSP_DIR Middlewares/CMSIS-DSP)
+add_library(cmsis_dsp STATIC
+  ${CMSIS_DSP_DIR}/Source/TransformFunctions/TransformFunctions.c
+  ${CMSIS_DSP_DIR}/Source/CommonTables/CommonTables.c
+  ${CMSIS_DSP_DIR}/Source/ComplexMathFunctions/ComplexMathFunctions.c
+)
+target_include_directories(cmsis_dsp
+  PUBLIC  ${CMSIS_DSP_DIR}/Include
+  PRIVATE ${CMSIS_DSP_DIR}/PrivateInclude
+)
+target_link_libraries(cmsis_dsp PRIVATE board_config)
+target_compile_options(cmsis_dsp PRIVATE -O2 -w)
 
 # ---------------------------------------------------------------------------
 # Firmware
@@ -146,7 +164,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE MINIMP3_ONLY_MP3 MINIMP3_NO_S
 # Warnings for our own code
 set_source_files_properties(${APP_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter")
 # minimp3 implementation: third-party code, and decoding speed matters even in Debug
-set_source_files_properties(App/Src/minimp3_impl.c PROPERTIES COMPILE_OPTIONS "-O2;-w")
+set_source_files_properties(App/Src/minimp3_impl.c PROPERTIES COMPILE_OPTIONS "-O3;-w")
+# Runs ~30 times a second: optimised in Debug builds too
+set_source_files_properties(App/Src/spectrum.c PROPERTIES COMPILE_OPTIONS "-O2;-Wall;-Wextra;-Wno-unused-parameter")
 
 target_link_options(${PROJECT_NAME} PRIVATE
   -T${LINKER_SCRIPT}
@@ -159,7 +179,7 @@ target_link_options(${PROJECT_NAME} PRIVATE
 )
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_DEPENDS "${LINKER_SCRIPT}")
 
-target_link_libraries(${PROJECT_NAME} PRIVATE board_config lvgl m)
+target_link_libraries(${PROJECT_NAME} PRIVATE board_config lvgl cmsis_dsp m)
 
 # ---------------------------------------------------------------------------
 # Post-build: .hex / .bin and size report

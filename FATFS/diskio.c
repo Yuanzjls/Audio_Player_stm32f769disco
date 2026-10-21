@@ -10,6 +10,7 @@
 
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
+#include "main.h"
 #include "stm32f769i_discovery_sd.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -21,17 +22,16 @@
 #define SD_TIMEOUT 1000
 #define SD_DEFAULT_BLOCK_SIZE 512
 
-/* Internal SRAM (DTCM + SRAM1/2) is never cached (see the MPU setup in main.c),
- * so the SD DMA can write there directly. Anything else (e.g. buffers in the
- * cacheable SDRAM) goes through this bounce buffer. */
+/* DTCM is never cached, so the SD DMA can write there directly. Anything else
+ * (cacheable SRAM1/2 and SDRAM) goes through this bounce buffer in DTCM. */
 #define DMA_SAFE_START	0x20000000UL
-#define DMA_SAFE_END	0x20080000UL
+#define DMA_SAFE_END	0x20020000UL
 #define BOUNCE_SECTORS	8U
 
 /* Given from the SD DMA completion callbacks below */
 static SemaphoreHandle_t xSemaphore;
 
-static BYTE s_bounce[BOUNCE_SECTORS * SD_DEFAULT_BLOCK_SIZE] __attribute__((aligned(32)));
+static BYTE s_bounce[BOUNCE_SECTORS * SD_DEFAULT_BLOCK_SIZE] DMA_BUFFER;
 
 static int is_dma_safe(const void *buff)
 {

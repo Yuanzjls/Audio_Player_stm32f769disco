@@ -14,6 +14,8 @@
  */
 #include "player.h"
 
+#include "main.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,8 +95,8 @@ static uint16_t track_count(void);
  * player task (scan_library) before track_count is published, read-only after. */
 static char s_names[PLAYER_MAX_TRACKS][PLAYER_TITLE_MAX] __attribute__((section(".sdram")));
 
-/* DMA buffer: both halves. Lives in SRAM that the MPU maps non-cacheable. */
-static int16_t s_audio_buf[2 * HALF_SAMPLES] __attribute__((aligned(32)));
+/* DMA buffer: both halves, in uncached DTCM */
+static int16_t s_audio_buf[2 * HALF_SAMPLES] DMA_BUFFER;
 
 /* ---- status helpers -------------------------------------------------------- */
 

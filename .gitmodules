@@ -34,3 +34,6 @@
 [submodule "Middlewares/minimp3"]
 	path = Middlewares/minimp3
 	url = https://github.com/lieff/minimp3.git
+[submodule "Middlewares/CMSIS-DSP"]
+	path = Middlewares/CMSIS-DSP
+	url = https://github.com/ARM-software/CMSIS-DSP.git
