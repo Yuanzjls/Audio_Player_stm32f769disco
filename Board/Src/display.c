@@ -494,11 +494,6 @@ void display_video_present(uint16_t *frame)
   s_pending_fb = frame;    /* sent on the next TE */
 }
 
-const uint16_t *display_video_shown(void)
-{
-  return s_active_fb;
-}
-
 void display_video_end(void)
 {
   while (s_pending_fb != NULL)

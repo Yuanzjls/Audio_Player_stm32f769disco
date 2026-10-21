@@ -159,6 +159,12 @@ static uint32_t audio_frames_played(void)
   return halves * HALF_FRAMES + (uint32_t)offset;
 }
 
+/* Time of video frame @p frame from the start */
+static uint32_t frame_time_ms(uint32_t frame)
+{
+  return (uint32_t)(((uint64_t)frame * s_avi.frame_us) / 1000U);
+}
+
 static uint32_t clock_ms(void)
 {
   if (!s_clock_running)
@@ -177,7 +183,7 @@ static bool ring_put(const int16_t *pcm, uint32_t frames, uint32_t channels)
 {
   for (uint32_t i = 0; i < frames;)
   {
-    while (RING_FRAMES - ring_level() == 0U)
+    while (ring_level() == RING_FRAMES)
     {
       if (!s_run)
       {
@@ -392,6 +398,12 @@ static void frame_mcus(void *ctx, const uint8_t *data, uint32_t len)
   yuv2rgb_mcus(&s_target, data, len);
 }
 
+/* Row @p y of layer @p l in frame buffer @p fb */
+static uint16_t *layer_row(uint16_t *fb, const video_layer_t *l, uint32_t y)
+{
+  return &fb[(uint32_t)(l->y + (int32_t)y) * DISPLAY_WIDTH + (uint32_t)l->x];
+}
+
 /* Blend layer @p l onto @p fb, keeping what it covers in @p under. The layer's
  * colours are premultiplied by its alpha: out = rgb + fb * (255 - alpha). */
 __attribute__((optimize("O3")))
@@ -399,7 +411,7 @@ static void blend_layer(uint16_t *fb, const video_layer_t *l, uint16_t *under)
 {
   for (uint32_t y = 0; y < l->h; y++)
   {
-    uint16_t       *d = &fb[(uint32_t)(l->y + (int32_t)y) * DISPLAY_WIDTH + (uint32_t)l->x];
+    uint16_t       *d = layer_row(fb, l, y);
     const uint16_t *s = &l->rgb[y * l->w];
     memcpy(&under[y * l->w], d, l->w * 2U);
     if (l->alpha == NULL)
@@ -457,8 +469,7 @@ static void show_frame(const slot_t *slot)
       {
         for (uint32_t y = 0; y < s_drawn[i].h; y++)
         {
-          memset(&fb[(uint32_t)(s_drawn[i].y + (int32_t)y) * DISPLAY_WIDTH + (uint32_t)s_drawn[i].x], 0,
-                 s_drawn[i].w * 2U);
+          memset(layer_row(fb, &s_drawn[i], y), 0, s_drawn[i].w * 2U);
         }
       }
     }
@@ -503,7 +514,7 @@ static void render_task(void *arg)
     xSemaphoreTake(s_render_lock, portMAX_DELAY);
     const slot_t *slot = &s_slots[idx];
     const uint32_t frame_ms = s_avi.frame_us / 1000U;
-    const uint32_t due = (uint32_t)(((uint64_t)slot->frame * s_avi.frame_us) / 1000U);
+    const uint32_t due = frame_time_ms(slot->frame);
 
     /* Wait for the frame's time (the clock starts with the audio) */
     bool put_back = false;
@@ -563,6 +574,15 @@ static void release_pipeline(void)
   xSemaphoreGive(s_reader_lock);
 }
 
+/* Let both tasks work again */
+static void run_pipeline(void)
+{
+  s_state = VIDEO_PLAYING;
+  s_run   = true;
+  xTaskNotifyGive(s_reader);
+  xTaskNotifyGive(s_render);
+}
+
 /* Empty the frame queue and the audio ring, stop the audio output */
 static void flush(void)
 {
@@ -595,7 +615,7 @@ static void restart_at(uint32_t frame)
   s_pos           = pos;
   s_next_frame    = frame;
   s_eof           = false;
-  s_clock_base_ms = (uint32_t)(((uint64_t)frame * s_avi.frame_us) / 1000U);
+  s_clock_base_ms = frame_time_ms(frame);
 }
 
 void video_init(void)
@@ -663,8 +683,7 @@ bool video_open(const char *path, video_info_t *info)
       info->width       = s_avi.width;
       info->height      = s_avi.height;
       info->fps_x100    = (uint32_t)(100000000ULL / s_avi.frame_us);
-      info->duration_ms = (uint32_t)(((uint64_t)s_avi.frames * s_avi.frame_us) / 1000U);
-      info->has_audio   = s_audio_ok;
+      info->duration_ms = frame_time_ms(s_avi.frames);
       if (!s_avi.has_audio)
       {
         snprintf(info->audio, sizeof(info->audio), "no sound");
@@ -700,18 +719,7 @@ void video_play(void)
     {
       audio_out_resume();
     }
-    else if (s_clock_running)
-    {
-      s_tick_start = xTaskGetTickCount();
-    }
-    if (!s_audio_started && !s_audio_ok)
-    {
-      s_clock_running = false;           /* restarted by the reader from the base */
-    }
-    s_state = VIDEO_PLAYING;
-    s_run   = true;
-    xTaskNotifyGive(s_reader);
-    xTaskNotifyGive(s_render);
+    run_pipeline();                      /* without audio output, the reader starts the clock */
   }
   xSemaphoreGive(s_ctrl);
 }
@@ -729,6 +737,7 @@ void video_pause(void)
     else
     {
       s_clock_base_ms = clock_ms();
+      s_clock_running = false;
     }
     s_state = VIDEO_PAUSED;
     release_pipeline();
@@ -745,14 +754,10 @@ void video_seek(uint32_t position_ms)
     halt_pipeline();
     flush();
     restart_at((uint32_t)(((uint64_t)position_ms * 1000U) / s_avi.frame_us));
-    s_state = VIDEO_PAUSED;
     release_pipeline();
     if (was_playing)
     {
-      s_state = VIDEO_PLAYING;
-      s_run   = true;
-      xTaskNotifyGive(s_reader);
-      xTaskNotifyGive(s_render);
+      run_pipeline();
     }
   }
   xSemaphoreGive(s_ctrl);
@@ -824,8 +829,7 @@ void video_copy_frame(uint16_t *dst)
     {
       for (uint32_t y = 0; y < s_drawn[i].h; y++)
       {
-        memcpy(&dst[(uint32_t)(s_drawn[i].y + (int32_t)y) * DISPLAY_WIDTH + (uint32_t)s_drawn[i].x],
-               &s_under[i][y * s_drawn[i].w], s_drawn[i].w * 2U);
+        memcpy(layer_row(dst, &s_drawn[i], y), &s_under[i][y * s_drawn[i].w], s_drawn[i].w * 2U);
       }
     }
   }

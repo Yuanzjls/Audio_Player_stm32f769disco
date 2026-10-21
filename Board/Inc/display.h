@@ -40,8 +40,6 @@ void display_video_begin(void);
 uint16_t *display_video_frame(void);
 /** Show @p frame (from display_video_frame()) from the next panel refresh on. */
 void display_video_present(uint16_t *frame);
-/** The frame on screen now. */
-const uint16_t *display_video_shown(void);
 /** Back to LVGL, which redraws everything. */
 void display_video_end(void);
 

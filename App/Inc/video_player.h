@@ -32,7 +32,6 @@ typedef struct
   uint32_t width, height;
   uint32_t fps_x100;          /**< frames per second x 100 */
   uint32_t duration_ms;
-  bool     has_audio;
   char     audio[32];         /**< e.g. "PCM 44.1 kHz stereo", "no sound" */
 } video_info_t;
 

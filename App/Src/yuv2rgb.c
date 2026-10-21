@@ -94,7 +94,6 @@ static inline uint32_t two_pixels(uint32_t y, uint32_t r, uint32_t g, uint32_t b
   return ((rs << 8) & 0xF800F800U) | ((gs << 3) & 0x07E007E0U) | ((bs >> 3) & 0x001F001FU);
 }
 
-
 /* 4:2:0 MCU (16x16) wholly inside the frame buffer and the picture, at an even
  * x (two pixels per 32-bit store) */
 static void mcu_420_fast(const yuv2rgb_t *t, const uint8_t *mcu, int32_t px, int32_t py)

@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "display.h"
 #include "ff.h"
@@ -127,8 +128,7 @@ static void format_time(char *buf, size_t len, uint32_t ms)
 static bool is_avi(const char *name)
 {
   const size_t n = strlen(name);
-  return n > 4U && (strcmp(&name[n - 4U], ".avi") == 0 || strcmp(&name[n - 4U], ".AVI") == 0 ||
-                    strcmp(&name[n - 4U], ".Avi") == 0);
+  return n > 4U && strcasecmp(&name[n - 4U], ".avi") == 0;
 }
 
 /* ---- list ------------------------------------------------------------------ */
@@ -321,6 +321,15 @@ static void update_stats(bool restart)
 
 /* ---- playback ---------------------------------------------------------------- */
 
+static void log_stats(const char *what)
+{
+  uint32_t shown, dropped, decode_ms;
+  video_stats(&shown, &dropped, &decode_ms);
+  LOG_INFO("video: %s at %lu ms, %lu frames shown, %lu dropped, %lu ms per frame", what,
+           (unsigned long)video_position_ms(), (unsigned long)shown, (unsigned long)dropped,
+           (unsigned long)((shown != 0U) ? decode_ms / shown : 0U));
+}
+
 static void update_time(void)
 {
   char pos[16], dur[16];
@@ -380,11 +389,7 @@ static void stop_playing(void)
     return;
   }
   video_pause();
-  uint32_t shown, dropped, decode_ms;
-  video_stats(&shown, &dropped, &decode_ms);
-  LOG_INFO("video: paused at %lu ms, %lu frames shown, %lu dropped, %lu ms per frame",
-           (unsigned long)video_position_ms(), (unsigned long)shown, (unsigned long)dropped,
-           (unsigned long)((shown != 0U) ? decode_ms / shown : 0U));
+  log_stats("paused");
   video_copy_frame(s_still_px);
   video_set_layer(LAYER_STATS, NULL);
   remove_controls_layers();
@@ -514,10 +519,7 @@ static void poll(lv_timer_t *timer)
   lv_display_trigger_activity(NULL);   /* no screen timeout while watching */
   if (video_state() == VIDEO_ENDED)
   {
-    uint32_t shown, dropped, decode_ms;
-    video_stats(&shown, &dropped, &decode_ms);
-    LOG_INFO("video: ended, %lu frames shown, %lu dropped, %lu ms per frame", (unsigned long)shown,
-             (unsigned long)dropped, (unsigned long)((shown != 0U) ? decode_ms / shown : 0U));
+    log_stats("ended");
     close_video();
     return;
   }
