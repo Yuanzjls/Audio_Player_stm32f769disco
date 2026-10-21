@@ -1,6 +1,7 @@
 # Builds the firmware on every push and pull request (Debug and Release, kept
-# as downloadable artifacts). A pushed "v*" tag also publishes a GitHub release
-# with the Release firmware attached.
+# as downloadable artifacts) and runs the host unit tests. A pushed "v*" tag
+# also publishes a GitHub release with the Release firmware attached, once the
+# build and the tests have passed.
 name: Build
 
 on:
@@ -48,9 +49,30 @@ jobs:
             build/${{ matrix.preset }}/Audio_Player_stm32f769disco.elf
           if-no-files-found: error
 
+  # Host unit tests (tests/): ID3, WAV, MP3, spectrum, with AddressSanitizer
+  # and UndefinedBehaviorSanitizer, so memory errors fail the run too
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake -S tests -B build/tests -G Ninja -DSANITIZE=ON
+
+      - name: Build
+        run: cmake --build build/tests
+
+      - name: Run
+        run: ctest --test-dir build/tests --output-on-failure
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, tests]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v5

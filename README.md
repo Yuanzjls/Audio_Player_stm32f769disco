@@ -90,6 +90,22 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 * `F5` – build, flash and stop at `main()`. Pick *Debug (OpenOCD + GDB)* (C/C++ extension only) or
   *Debug (Cortex-Debug)* (with the [Cortex-Debug](https://marketplace.visualstudio.com/items?itemName=marus25.cortex-debug) extension: register/peripheral/FreeRTOS views).
 
+## Tests
+
+The board-independent parts (ID3 tags and cover location, WAV and MP3 decoding, the spectrum
+analysis) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
+output (`tests/support/fakes.c`). The MP3 tests decode real files from `tests/fixtures`
+(regenerate them with `make_fixtures.sh`). They need a host C compiler (e.g. gcc; on Windows
+`winget install BrechtSanders.WinLibs.POSIX.UCRT`):
+
+```sh
+cmake -S tests -B build/tests -G Ninja      # Linux: add -DSANITIZE=ON for ASan + UBSan
+cmake --build build/tests
+ctest --test-dir build/tests --output-on-failure
+```
+
+GitHub Actions runs them on every push, with the sanitizers, next to the firmware builds.
+
 ## Code layout
 
 | Folder | Contents |
@@ -99,6 +115,7 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
 | `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied); `HAL_Patches/`: a HAL file built in place of ST's (shorter SD command timeout, see its header) |
+| `tests/` | Host unit tests (see [Tests](#tests)) |
 | `FATFS/` | FatFs, with the SD-card glue in `diskio.c` and the settings in `ffconf.h` |
 
 Tasks: `player` (priority 3) streams audio; `gui` (priority 1) runs LVGL. The UI only talks to the
