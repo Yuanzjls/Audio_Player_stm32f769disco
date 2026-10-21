@@ -11,6 +11,8 @@
  *  - The panel is natively portrait, so the landscape image is sent in
  *    ZONES vertical stripes (one DSI refresh each) to avoid tearing.
  * The panel keeps the last image, so nothing is sent while the UI is idle.
+ * Panel commands (brightness, display on/off) are sent by the GUI task between
+ * frame transfers: while one is being sent, the TE interrupt starts no transfer.
  */
 #include "display.h"
 
@@ -19,6 +21,7 @@
 #include "main.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 #include "otm8009a/otm8009a.h"
 
 #define ZONES        4
@@ -64,6 +67,14 @@ static SemaphoreHandle_t  s_flush_done;  /* given when LVGL may draw again */
 /* Upper bound for one wait (normally released within one refresh, ~17-33 ms) */
 #define FLUSH_WAIT_TIMEOUT_MS 100
 static volatile bool      s_refreshing;  /* a multi-zone DSI transfer is running */
+static volatile bool      s_cmd_busy;    /* a panel command is being sent: no transfer starts */
+static bool               s_on = true;
+static uint8_t            s_brightness = 0x7F;   /* as set by OTM8009A_Init() */
+
+/* DCS commands (MIPI Display Command Set) */
+#define DCS_DISPLAY_OFF        0x28U
+#define DCS_DISPLAY_ON         0x29U
+#define DCS_WRITE_BRIGHTNESS   0x51U
 static volatile uint32_t  s_next_zone;
 
 /* CASET parameters (start/end column, big endian) for each stripe */
@@ -363,6 +374,78 @@ lv_display_t *display_init(void)
   return s_disp;
 }
 
+/* ---- panel commands ----------------------------------------------------- */
+
+/* Send a DCS command from the GUI task, between frame transfers */
+static void send_panel_command(uint8_t cmd, bool has_param, uint8_t param)
+{
+  for (;;)
+  {
+    taskENTER_CRITICAL();             /* masks the DSI interrupt */
+    const bool idle = !s_refreshing;
+    if (idle)
+    {
+      s_cmd_busy = true;
+    }
+    taskEXIT_CRITICAL();
+    if (idle)
+    {
+      break;
+    }
+    vTaskDelay(1);                     /* a transfer takes ~17 ms */
+  }
+  if (has_param)
+  {
+    HAL_DSI_ShortWrite(&s_dsi, 0, DSI_DCS_SHORT_PKT_WRITE_P1, cmd, param);
+  }
+  else
+  {
+    HAL_DSI_ShortWrite(&s_dsi, 0, DSI_DCS_SHORT_PKT_WRITE_P0, cmd, 0x00);
+  }
+  s_cmd_busy = false;
+}
+
+void display_set_brightness(uint8_t percent)
+{
+  if (percent > 100U)
+  {
+    percent = 100U;
+  }
+  s_brightness = (uint8_t)((percent * 255U + 50U) / 100U);
+  if (s_on)
+  {
+    send_panel_command(DCS_WRITE_BRIGHTNESS, true, s_brightness);
+  }
+}
+
+void display_set_on(bool on)
+{
+  if (on == s_on)
+  {
+    return;
+  }
+  s_on = on;
+  if (on)
+  {
+    send_panel_command(DCS_DISPLAY_ON, false, 0);
+    send_panel_command(DCS_WRITE_BRIGHTNESS, true, s_brightness);
+    /* Nothing was drawn while off: draw everything again */
+    lv_display_enable_invalidation(s_disp, true);
+    lv_obj_invalidate(lv_screen_active());
+  }
+  else
+  {
+    send_panel_command(DCS_WRITE_BRIGHTNESS, true, 0);
+    send_panel_command(DCS_DISPLAY_OFF, false, 0);
+    lv_display_enable_invalidation(s_disp, false);   /* no rendering for a dark screen */
+  }
+}
+
+bool display_is_on(void)
+{
+  return s_on;
+}
+
 void display_dsi_irq_handler(void)
 {
   HAL_DSI_IRQHandler(&s_dsi);
@@ -372,9 +455,9 @@ void display_dsi_irq_handler(void)
 
 void HAL_DSI_TearingEffectCallback(DSI_HandleTypeDef *hdsi)
 {
-  if (s_refreshing || s_pending_fb == NULL)
+  if (s_refreshing || s_cmd_busy || s_pending_fb == NULL)
   {
-    return;  /* transfer in progress, or nothing new to show */
+    return;  /* transfer or panel command in progress, or nothing new to show */
   }
 
   s_active_fb  = s_pending_fb;

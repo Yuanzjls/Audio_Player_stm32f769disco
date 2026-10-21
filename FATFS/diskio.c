@@ -214,6 +214,54 @@ DRESULT disk_read (
 
 #if FF_FS_READONLY == 0
 
+/* One DMA write from a buffer that is safe for DMA; waits until the card has
+ * programmed the data */
+static DRESULT write_blocks_once(const BYTE *buff, LBA_t sector, UINT count)
+{
+	xSemaphoreTake(xSemaphore, 0);
+	s_sd_error = 0;
+
+	if (wait_card_ready() != 0)
+	{
+		return RES_NOTRDY;
+	}
+	if (BSP_SD_WriteBlocks_DMA((uint32_t *)buff, (uint32_t)sector, count) != MSD_OK)
+	{
+		s_sd_error = uSdHandle.ErrorCode;
+		return RES_ERROR;
+	}
+	/* Woken by BSP_SD_WriteCpltCallback() or HAL_SD_ErrorCallback() */
+	if (xSemaphoreTake(xSemaphore, pdMS_TO_TICKS(SD_TIMEOUT)) != pdTRUE)
+	{
+		s_sd_error = SDMMC_ERROR_TIMEOUT;
+		return RES_ERROR;
+	}
+	if (s_sd_error != 0U)
+	{
+		return RES_ERROR;
+	}
+	return (wait_card_ready() == 0) ? RES_OK : RES_ERROR;
+}
+
+/* DMA write, retried after an abort if it fails */
+static DRESULT write_blocks_dma(const BYTE *buff, LBA_t sector, UINT count)
+{
+	DRESULT res = RES_ERROR;
+
+	for (UINT attempt = 1; attempt <= SD_ATTEMPTS; attempt++)
+	{
+		res = write_blocks_once(buff, sector, count);
+		if (res == RES_OK)
+		{
+			break;
+		}
+		LOG_WARN("sd: write of %u sector(s) at %lu failed (error 0x%lx)", count, (unsigned long)sector,
+		         (unsigned long)s_sd_error);
+		HAL_SD_Abort(&uSdHandle);
+	}
+	return res;
+}
+
 DRESULT disk_write (
 	BYTE pdrv,			/* Physical drive nmuber to identify the drive */
 	const BYTE *buff,	/* Data to be written */
@@ -221,27 +269,29 @@ DRESULT disk_write (
 	UINT count			/* Number of sectors to write */
 )
 {
-	DRESULT res;
-
 	if (pdrv != DEV_MMC) return RES_PARERR;
 
-	res = RES_ERROR;
-
-	if(BSP_SD_WriteBlocks_DMA((uint32_t*)buff,
-	(uint32_t)(sector),
-	count) == MSD_OK)
+	if (is_dma_safe(buff, count))
 	{
-		/* Wait for BSP_SD_WriteCpltCallback() */
-		if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
-		{
-			if (wait_card_ready() == 0)
-			{
-				res = RES_OK;
-			}
-		}
+		return write_blocks_dma(buff, sector, count);
 	}
 
-	return res;
+	/* Cached memory: the DMA would read what is not yet written back from the
+	 * cache, so the data goes through the bounce buffer in uncached DTCM */
+	while (count > 0U)
+	{
+		const UINT n = (count < BOUNCE_SECTORS) ? count : BOUNCE_SECTORS;
+		memcpy(s_bounce, buff, n * SD_DEFAULT_BLOCK_SIZE);
+		const DRESULT res = write_blocks_dma(s_bounce, sector, n);
+		if (res != RES_OK)
+		{
+			return res;
+		}
+		buff   += n * SD_DEFAULT_BLOCK_SIZE;
+		sector += n;
+		count  -= n;
+	}
+	return RES_OK;
 }
 
 #endif

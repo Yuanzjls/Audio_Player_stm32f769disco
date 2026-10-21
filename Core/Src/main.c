@@ -25,7 +25,7 @@
 #include "sysmon.h"
 #include "stm32f769i_discovery_sdram.h"
 #include "touch.h"
-#include "ui.h"
+#include "shell.h"
 
 #define INITIAL_VOLUME      20      /* 0..100 */
 
@@ -37,6 +37,11 @@ static void mpu_config(void);
 static void cpu_cache_enable(void);
 static void system_clock_config(void);
 static void gui_task(void *arg);
+
+const char *firmware_version(void)
+{
+  return FIRMWARE_VERSION;
+}
 
 int main(void)
 {
@@ -108,7 +113,7 @@ static void gui_task(void *arg)
   {
     LOG_ERROR("touch input unavailable");
   }
-  ui_init();
+  shell_init();
 
   /* Draw the first frame now, then let the music start */
   lv_refr_now(NULL);

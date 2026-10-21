@@ -23,6 +23,13 @@ lv_display_t *display_init(void);
 /** To be called from DSI_IRQHandler */
 void display_dsi_irq_handler(void);
 
+/** Panel brightness, 0..100 %. GUI task only. */
+void display_set_brightness(uint8_t percent);
+
+/** Switch the panel off (dark, nothing rendered) or on again. GUI task only. */
+void display_set_on(bool on);
+bool display_is_on(void);
+
 #ifdef __cplusplus
 }
 #endif

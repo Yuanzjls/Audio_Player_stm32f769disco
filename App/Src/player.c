@@ -15,6 +15,7 @@
 #include "player.h"
 
 #include "main.h"
+#include "settings.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -686,7 +687,11 @@ static void mount_card_and_scan(void)
     if (f_mount(&s_fs, "", 1) == FR_OK)
     {
       const uint16_t count = scan_library();
+      static const char *const k_fs_names[] = { "?", "FAT12", "FAT16", "FAT32", "exFAT" };
       status_lock();
+      s_status.card_mb = (uint32_t)(((uint64_t)(s_fs.n_fatent - 2U) * s_fs.csize) / 2048U);
+      snprintf(s_status.card_fs, sizeof(s_status.card_fs), "%s",
+               k_fs_names[(s_fs.fs_type <= FS_EXFAT) ? s_fs.fs_type : 0]);
       s_status.track_count = count;
       s_status.library_serial++;
       status_unlock();
@@ -747,6 +752,15 @@ static void player_task(void *arg)
   (void)arg;
 
   mount_card_and_scan();
+
+  /* The saved settings decide the volume and whether to start in shuffle mode */
+  settings_load();
+  const settings_t settings = settings_get();
+  status_lock();
+  s_status.volume  = settings.volume;
+  s_status.shuffle = settings.shuffle_on_start;
+  status_unlock();
+
   wait_for_ui();
 
   /* Shuffle (the default) also picks the first song at random */

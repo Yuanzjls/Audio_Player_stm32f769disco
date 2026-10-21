@@ -33,6 +33,9 @@ extern "C" {
 /** Unrecoverable error: halts with the red LED on (breaks into the debugger if attached). */
 void Error_Handler(void);
 
+/** Firmware version ("git describe" at build time, e.g. "v2.0.0"). */
+const char *firmware_version(void);
+
 #ifdef __cplusplus
 }
 #endif

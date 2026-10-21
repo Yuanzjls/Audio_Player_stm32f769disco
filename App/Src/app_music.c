@@ -1,6 +1,6 @@
 /**
- * @file  ui.c
- * @brief Player screen: song library on the left, "now playing" on the right.
+ * @file  app_music.c
+ * @brief The Music app: song library on the left, "now playing" on the right.
  *
  *   +-----------------+------------------------------------------+
  *   | Library   60    | NOW PLAYING              12 / 60  44.1k  |
@@ -18,24 +18,23 @@
  * hardware JPEG codec, see cover_art.c), or a note when there is none; a
  * blurred, washed-out copy of it fills the now-playing panel behind the rest.
  *
- * The UI never touches the audio hardware: it sends commands through the
- * player API and refreshes itself from player_get_status() on a timer.
- * Song names are drawn with a TrueType font loaded from the SD card
- * (font.ttf / font.otf / font.ttc in the root) so that CJK names render
- * correctly; without it the built-in Latin font is used.
+ * The app never touches the audio hardware: it sends commands through the
+ * player API and refreshes itself from player_get_status() on a timer. The
+ * music goes on when the app is left (home button); only the spectrum stops.
+ * Song names are drawn with the shell's TrueType font from the SD card, so
+ * that CJK names render correctly.
  * File names of the form "Artist - Title" are shown as artist and title.
  */
-#include "ui.h"
+#include "shell.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #include "lvgl.h"
 #include "cover_art.h"
-#include "log.h"
 #include "player.h"
 #include "spectrum.h"
-#include "sysmon.h"
+#include "theme.h"
 
 #define REFRESH_PERIOD_MS   100
 
@@ -63,30 +62,12 @@
 #define SPECTRUM_MIN_BAR_H  2       /* a stub stays visible so the strip reads as an analyser at rest */
 #define VOLUME_Y            420
 #define FOLD_ANIM_MS        250
-#define STATS_PERIOD_MS     1000
-
-/* Fonts loaded from the SD card */
-#define TITLE_FONT_SIZE     32
-#define TEXT_FONT_SIZE      22
 
 /* Sliders: thick bar and a wide touch margin, fingers are not precise */
 #define SLIDER_HEIGHT       14
 #define SEEK_TOUCH_MARGIN   32
 #define VOLUME_TOUCH_MARGIN 28
 
-#define COLOR_BG            lv_color_hex(0xF4F6F9)
-#define COLOR_PANEL         lv_color_hex(0xFFFFFF)
-#define COLOR_DIVIDER       lv_color_hex(0xE2E6EC)
-#define COLOR_SURFACE       lv_color_hex(0xE2E6EC)
-#define COLOR_ACCENT        lv_color_hex(0x1A73E8)
-#define COLOR_ACCENT_DARK   lv_color_hex(0x0B4FB3)
-#define COLOR_ACCENT_SOFT   lv_color_hex(0xE8F0FE)
-#define COLOR_TEXT          lv_color_hex(0x1F2328)
-#define COLOR_TEXT_DIM      lv_color_hex(0x5F6875)
-#define COLOR_WARNING       lv_color_hex(0xB45309)
-#define COLOR_ON_ACCENT     lv_color_hex(0xFFFFFF)
-
-static const char *const k_font_paths[] = { "S:/font.ttf", "S:/font.otf", "S:/font.ttc" };
 
 typedef struct
 {
@@ -101,7 +82,6 @@ typedef struct
   lv_obj_t *caption;
   lv_obj_t *transport;
   lv_obj_t *volume_icon;
-  lv_obj_t *stats;
   /* now playing */
   lv_obj_t *track_info;     /* "12 / 60   44.1 kHz stereo" */
   lv_obj_t *cover;
@@ -151,12 +131,11 @@ static uint32_t   s_shown_position = UINT32_MAX;   /* seconds shown by the posit
 static int32_t    s_last_volume_sent = -1;
 static uint32_t   s_cover_id = UINT32_MAX;     /* track serial whose cover is wanted */
 static bool       s_cover_done = true;
-static bool       s_fonts_tried;
-static lv_font_t *s_title_font;               /* NULL until loaded */
-static lv_font_t *s_text_font;
+static const lv_image_dsc_t *s_cover_shown;   /* cover on screen, NULL: the note */
+static lv_timer_t *s_spectrum_timer;
 
-static const lv_font_t *title_font(void) { return s_title_font ? s_title_font : &lv_font_montserrat_28; }
-static const lv_font_t *text_font(void)  { return s_text_font ? s_text_font : &lv_font_montserrat_20; }
+#define title_font() shell_font_title()
+#define text_font()  shell_font_text()
 
 /* ---- helpers --------------------------------------------------------------- */
 
@@ -172,6 +151,13 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t 
   lv_obj_set_style_text_color(label, color, 0);
   lv_label_set_text(label, "");
   return label;
+}
+
+/* One line high, so that LV_LABEL_LONG_MODE_DOTS shortens a long text with
+ * "..." instead of wrapping it onto further lines (call again on a font change) */
+static void one_line(lv_obj_t *label)
+{
+  lv_obj_set_height(label, lv_font_get_line_height(lv_obj_get_style_text_font(label, LV_PART_MAIN)));
 }
 
 /* A plain container without the theme's padding, border and scrolling */
@@ -292,56 +278,22 @@ static void on_volume_event(lv_event_t *e)
 
 /* ---- fonts ----------------------------------------------------------------- */
 
-static bool file_exists(const char *path)
+/* The shell loaded the SD-card fonts: use them, and re-label the library */
+static void music_fonts_changed(void)
 {
-  lv_fs_file_t file;
-  if (lv_fs_open(&file, path, LV_FS_MODE_RD) != LV_FS_RES_OK)
+  lv_obj_set_style_text_font(s_ui.title, title_font(), 0);
+  lv_obj_set_style_text_font(s_ui.artist, text_font(), 0);
+  one_line(s_ui.artist);
+  for (uint32_t k = 0; k < LIBRARY_POOL; k++)
   {
-    return false;
+    lv_obj_t *label = lv_obj_get_child(s_rows[k], 0);
+    lv_obj_set_style_text_font(label, text_font(), 0);
+    one_line(label);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);
+    s_row_index[k] = -1;
   }
-  lv_fs_close(&file);
-  return true;
-}
-
-/* Called once the SD card is mounted; tries a single time. */
-static void try_load_fonts(void)
-{
-  if (s_fonts_tried)
-  {
-    return;
-  }
-  s_fonts_tried = true;
-
-  for (size_t i = 0; i < sizeof(k_font_paths) / sizeof(k_font_paths[0]); i++)
-  {
-    if (!file_exists(k_font_paths[i]))
-    {
-      continue;
-    }
-    s_title_font = lv_tiny_ttf_create_file(k_font_paths[i], TITLE_FONT_SIZE);
-    s_text_font  = lv_tiny_ttf_create_file(k_font_paths[i], TEXT_FONT_SIZE);
-    if (s_title_font == NULL || s_text_font == NULL)
-    {
-      LOG_WARN("ui: %s is not a usable TrueType/OpenType font", k_font_paths[i]);
-      continue;
-    }
-    /* Glyphs missing from the font (e.g. LVGL symbols) come from the built-in one */
-    s_title_font->fallback = &lv_font_montserrat_28;
-    s_text_font->fallback  = &lv_font_montserrat_20;
-    LOG_INFO("ui: font %s loaded", k_font_paths[i]);
-
-    lv_obj_set_style_text_font(s_ui.title, s_title_font, 0);
-    lv_obj_set_style_text_font(s_ui.artist, s_text_font, 0);
-    /* Re-label the library rows with the new font */
-    for (uint32_t k = 0; k < LIBRARY_POOL; k++)
-    {
-      lv_obj_set_style_text_font(lv_obj_get_child(s_rows[k], 0), s_text_font, 0);
-      s_row_index[k] = -1;
-    }
-    s_shown_library_serial = UINT32_MAX;
-    return;
-  }
-  LOG_WARN("ui: no font.ttf/font.otf/font.ttc on the SD card, non-Latin titles will not render");
+  s_shown_library_serial = UINT32_MAX;
+  s_shown_track_serial   = UINT32_MAX;
 }
 
 /* ---- library list (virtualized) ------------------------------------------ */
@@ -447,6 +399,7 @@ static void highlight_library_row(int32_t index)
  * behind the panel, or (NULL) the note and the plain panel back */
 static void show_cover(const lv_image_dsc_t *image, const lv_image_dsc_t *backdrop)
 {
+  s_cover_shown = image;
   if (image != NULL)
   {
     lv_image_set_src(s_ui.cover_image, image);
@@ -554,11 +507,6 @@ static void refresh_cb(lv_timer_t *timer)
   const bool has_tracks = has_card && (st.state != PLAYER_STATE_NO_TRACKS);
   const bool first      = s_first_refresh;
 
-  if (has_card)
-  {
-    try_load_fonts();
-  }
-
   if (st.library_serial != s_shown_library_serial)
   {
     s_shown_library_serial = st.library_serial;
@@ -630,6 +578,14 @@ static void refresh_cb(lv_timer_t *timer)
   else
   {
     s_shown_position = UINT32_MAX;   /* the label follows the drag meanwhile */
+  }
+
+  /* Volume changed elsewhere (saved settings, the Settings app) */
+  if (st.volume != s_status.volume && !lv_slider_is_dragged(s_ui.volume))
+  {
+    lv_slider_set_value(s_ui.volume, st.volume, LV_ANIM_OFF);
+    lv_label_set_text_fmt(s_ui.volume_value, "%u", (unsigned)st.volume);
+    s_last_volume_sent = st.volume;
   }
 
   s_status = st;
@@ -800,6 +756,7 @@ static void build_library_panel(lv_obj_t *scr)
   s_list_spacer = make_box(s_ui.list, COLOR_PANEL);
   lv_obj_set_size(s_list_spacer, 1, 0);
   lv_obj_set_style_bg_opa(s_list_spacer, LV_OPA_TRANSP, 0);
+  lv_obj_set_clickable(s_list_spacer, false);
 
   for (uint32_t k = 0; k < LIBRARY_POOL; k++)
   {
@@ -815,6 +772,7 @@ static void build_library_panel(lv_obj_t *scr)
     lv_obj_t *label = make_label(row, text_font(), COLOR_TEXT);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_width(label, LIBRARY_WIDTH - 72);
+    one_line(label);
     lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);
 
     lv_obj_t *playing_icon = make_label(row, &lv_font_montserrat_20, COLOR_ACCENT);
@@ -844,11 +802,14 @@ static void build_now_playing(lv_obj_t *scr)
   lv_obj_set_hidden(s_ui.backdrop, true);
 
   /* Header: library fold button, caption */
+  lv_obj_t *home = shell_home_button(panel);
+  lv_obj_set_pos(home, PANEL_PAD - 10, 12);
+
   s_ui.btn_fold = make_box(panel, COLOR_BG);
   lv_obj_set_style_bg_opa(s_ui.btn_fold, LV_OPA_TRANSP, 0);
   lv_obj_set_style_bg_opa(s_ui.btn_fold, LV_OPA_COVER, LV_STATE_PRESSED);
   lv_obj_set_size(s_ui.btn_fold, 44, 40);
-  lv_obj_set_pos(s_ui.btn_fold, PANEL_PAD - 10, 12);
+  lv_obj_set_pos(s_ui.btn_fold, PANEL_PAD - 10 + 48, 12);
   lv_obj_set_clickable(s_ui.btn_fold, true);
   lv_obj_set_ext_click_area(s_ui.btn_fold, 10);
   lv_obj_set_style_radius(s_ui.btn_fold, 8, 0);
@@ -861,12 +822,14 @@ static void build_now_playing(lv_obj_t *scr)
   s_ui.caption = make_label(panel, &lv_font_montserrat_20, COLOR_TEXT_DIM);
   lv_label_set_text(s_ui.caption, "NOW PLAYING");
   lv_obj_set_style_text_letter_space(s_ui.caption, 2, 0);
-  lv_obj_set_pos(s_ui.caption, PANEL_PAD + 44, 22);
+  lv_obj_set_pos(s_ui.caption, PANEL_PAD + 44 + 48, 22);
 
-  /* One right-aligned label (LVGL re-aligns it whenever the text changes), so
-   * the track position and format can never overlap each other or the caption */
-  s_ui.track_info = make_label(panel, &lv_font_montserrat_20, COLOR_TEXT_DIM);
-  lv_obj_align(s_ui.track_info, LV_ALIGN_TOP_RIGHT, -PANEL_PAD, 22);
+  /* Track position and format: centred between the two times under the seek
+   * bar (placed in layout_now_playing; the header has no room for it) */
+  s_ui.track_info = make_label(panel, &lv_font_montserrat_14, COLOR_TEXT_DIM);
+  lv_obj_set_style_text_align(s_ui.track_info, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(s_ui.track_info, LV_LABEL_LONG_MODE_DOTS);
+  one_line(s_ui.track_info);
 
   /* Cover tile */
   s_ui.cover = make_box(panel, COLOR_ACCENT);
@@ -887,6 +850,7 @@ static void build_now_playing(lv_obj_t *scr)
 
   s_ui.artist = make_label(panel, text_font(), COLOR_TEXT_DIM);
   lv_label_set_long_mode(s_ui.artist, LV_LABEL_LONG_MODE_DOTS);
+  one_line(s_ui.artist);
   lv_obj_set_pos(s_ui.artist, text_x, ARTIST_Y);
 
   s_ui.title = make_label(panel, title_font(), COLOR_TEXT);
@@ -972,10 +936,6 @@ static void build_volume(lv_obj_t *panel, uint8_t volume)
 
   s_ui.volume_value = make_label(panel, &lv_font_montserrat_20, COLOR_TEXT_DIM);
   lv_label_set_text_fmt(s_ui.volume_value, "%u", (unsigned)volume);
-
-  /* System status line (CPU load, memory) at the bottom right */
-  s_ui.stats = make_label(panel, &lv_font_montserrat_14, COLOR_TEXT_DIM);
-  lv_obj_align(s_ui.stats, LV_ALIGN_BOTTOM_RIGHT, -PANEL_PAD, -6);
 }
 
 /* Size / place everything in the now-playing panel for a panel width of @p w */
@@ -997,6 +957,9 @@ static void layout_now_playing(int32_t w)
   lv_obj_update_layout(s_ui.now_playing);
   lv_obj_align_to(s_ui.time_pos, s_ui.seek, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 12);
   lv_obj_align_to(s_ui.time_total, s_ui.seek, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 12);
+  /* Between the times, which need up to ~70 px each ("100:00") */
+  lv_obj_set_width(s_ui.track_info, full_w - 2 * 80);
+  lv_obj_align_to(s_ui.track_info, s_ui.seek, LV_ALIGN_OUT_BOTTOM_MID, 0, 16);
   lv_obj_align_to(s_ui.volume, s_ui.volume_icon, LV_ALIGN_OUT_RIGHT_MID, 24, 0);
   lv_obj_align_to(s_ui.volume_value, s_ui.volume, LV_ALIGN_OUT_RIGHT_MID, 24, 0);
 }
@@ -1027,30 +990,29 @@ static void on_fold_clicked(lv_event_t *e)
   lv_anim_start(&a);
 }
 
-static void stats_cb(lv_timer_t *timer)
+/* ---- app ------------------------------------------------------------------- */
+
+const lv_image_dsc_t *app_music_cover(void)
 {
-  (void)timer;
-  uint32_t heap_used, heap_total;
-  lv_mem_monitor_t gui;
-
-  sysmon_rtos_heap(&heap_used, &heap_total);
-  lv_mem_monitor(&gui);
-  const uint32_t gui_used_kb  = (uint32_t)((gui.total_size - gui.free_size) / 1024U);
-  const uint32_t gui_total_kb = (uint32_t)(gui.total_size / 1024U);
-
-  lv_label_set_text_fmt(s_ui.stats, "CPU %" LV_PRIu32 "%%    Heap %" LV_PRIu32 "/%" LV_PRIu32 " KB    GUI %" LV_PRIu32 "/%" LV_PRIu32 " KB",
-                        sysmon_cpu_load(), heap_used / 1024U, heap_total / 1024U, gui_used_kb, gui_total_kb);
+  return s_cover_shown;
 }
 
-void ui_init(void)
+static void music_show(void)
 {
-  lv_obj_t *scr = lv_screen_active();
-  lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  lv_obj_set_scrollable(scr, false);
+  refresh_cb(NULL);
+  lv_timer_resume(s_spectrum_timer);
+}
 
+/* The music plays on; the spectrum (FFT and redraws) is only needed on screen */
+static void music_hide(void)
+{
+  lv_timer_pause(s_spectrum_timer);
+}
+
+static void music_create(lv_obj_t *scr)
+{
   player_get_status(&s_status);
-  cover_art_init(0xF4F6F9);   /* COLOR_BG: backdrops are washed towards the panel colour */
+  cover_art_init(THEME_BG_RGB);   /* backdrops are washed towards the panel colour */
 
   build_library_panel(scr);
   build_now_playing(scr);
@@ -1063,10 +1025,20 @@ void ui_init(void)
   refresh_cb(NULL);
   lv_timer_create(refresh_cb, REFRESH_PERIOD_MS, NULL);
 
+  /* The cover and the library keep up to date while the app is hidden (cheap,
+   * nothing is drawn); the spectrum runs only while it is shown */
   spectrum_init();
-  lv_timer_create(spectrum_cb, SPECTRUM_PERIOD_MS, NULL);
-
-  stats_cb(NULL);
-  lv_timer_create(stats_cb, STATS_PERIOD_MS, NULL);
+  s_spectrum_timer = lv_timer_create(spectrum_cb, SPECTRUM_PERIOD_MS, NULL);
+  lv_timer_pause(s_spectrum_timer);
 }
+
+const app_t app_music = {
+  .name          = "Music",
+  .icon          = LV_SYMBOL_AUDIO,
+  .color         = 0x1A73E8,
+  .create        = music_create,
+  .show          = music_show,
+  .hide          = music_hide,
+  .fonts_changed = music_fonts_changed,
+};
 

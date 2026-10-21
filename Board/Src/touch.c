@@ -21,6 +21,7 @@ static lv_indev_t      *s_indev;
 static TaskHandle_t     s_gui_task;
 static volatile bool    s_data_pending;
 static bool             s_pressed;
+static bool             s_waking;      /* the touch that woke the screen is not passed on */
 
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
@@ -43,10 +44,25 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
   }
   s_pressed = pressed;
 
-  data->state   = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
   /* LVGL expects the last known position also while released */
   data->point.x = last_x;
   data->point.y = last_y;
+
+  /* With the screen off, a touch only switches it on: the UI does not see it
+   * (nor anything until the finger is lifted), so nothing unseen is pressed */
+  if (pressed && !display_is_on())
+  {
+    display_set_on(true);
+    lv_display_trigger_activity(NULL);
+    s_waking = true;
+  }
+  if (s_waking)
+  {
+    s_waking = pressed;
+    data->state = LV_INDEV_STATE_RELEASED;
+    return;
+  }
+  data->state = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
 lv_indev_t *touch_init(TaskHandle_t gui_task)

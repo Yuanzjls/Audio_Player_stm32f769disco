@@ -60,6 +60,8 @@ typedef struct
   uint8_t         art_format;    /**< embedded cover: 0 = none, 1 = JPEG, 2 = PNG */
   uint32_t        art_offset;    /**< position of the cover image in the file      */
   uint32_t        art_size;
+  uint32_t        card_mb;       /**< SD card file system size, MB (0: no card) */
+  char            card_fs[8];    /**< "FAT32", "exFAT", ... */
 } player_status_t;
 
 /** Create the player task. It mounts the SD card and starts playing once
