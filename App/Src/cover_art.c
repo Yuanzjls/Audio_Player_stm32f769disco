@@ -1,0 +1,740 @@
+/**
+ * @file  cover_art.c
+ * @brief Cover pictures decoded with the STM32F769's hardware JPEG codec.
+ *
+ * Event driven: the codec is fed and drained by DMA (DMA2 stream 3 in, stream
+ * 4 out). Its interrupts only swap buffers and wake the cover task, which
+ * sleeps in between:
+ *  - input: two chunks of the JPEG data, read from the music file by the task
+ *    while the codec consumes the other one;
+ *  - output: two chunks of YCbCr MCUs (8x8 sample blocks); the task averages
+ *    the samples of the centred square crop straight into a COVER_ART_SIZE
+ *    grid, so a picture of any size needs only that grid in memory;
+ *  - when the task falls behind, the interrupt pauses that side of the codec
+ *    and the task resumes it.
+ * The averages are converted to RGB565 (averaging before the conversion gives
+ * the same result, the conversion being linear) with an alpha channel that
+ * rounds the corners: an LVGL RGB565A8 image.
+ * The DMA buffers are in DTCM, which is never cached. Baseline JPEG only, like
+ * the hardware: progressive JPEG and PNG pictures get no cover.
+ */
+#include "cover_art.h"
+
+#include <math.h>
+#include <string.h>
+
+#include "FreeRTOS.h"
+#include "queue.h"
+#include "task.h"
+#include "ff.h"
+#include "log.h"
+#include "main.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
+
+#define SIZE              COVER_ART_SIZE
+#define CORNER_RADIUS     16
+#define MAX_SIDE          4096U        /* larger pictures are not shown */
+#define IN_CHUNK          4096U
+#define OUT_CHUNK         (768U * 16U) /* whole MCUs of every layout (64/192/256/384 bytes) */
+#define DECODE_TIMEOUT_MS 3000U
+#define TASK_STACK_WORDS  768
+#define TASK_PRIORITY     2            /* above the GUI: it mostly sleeps, and wakes for each chunk */
+#define IRQ_PRIORITY      6
+#define PATH_MAX_LEN      300
+#define NO_CELL           0xFFFFU
+#define BACKDROP_W        COVER_ART_BACKDROP_W
+#define BACKDROP_H        COVER_ART_BACKDROP_H
+#define BLUR_GRID         24           /* the backdrop is this coarse a copy, smoothed */
+#define BACKDROP_MIX      90           /* share of the cover in the backdrop, of 256 */
+#define BACKDROP_PRIORITY 1            /* as the GUI, while the backdrop is drawn */
+
+typedef struct
+{
+  uint32_t id;
+  uint8_t  format;
+  uint32_t offset;
+  uint32_t size;
+  char     path[PATH_MAX_LEN];
+} request_t;
+
+/* Sums of the samples that fall into one cell of the output grid */
+typedef struct
+{
+  uint32_t y, cb, cr, n;
+} cell_t;
+
+/* Layout of the codec output (set up once the JPEG header has been parsed) */
+typedef struct
+{
+  bool     ok;          /* supported picture, samples are being collected */
+  bool     gray;
+  uint32_t mcu_w, mcu_h;
+  uint32_t mcu_bytes;
+  uint32_t y_blocks;    /* 8x8 luma blocks per MCU */
+  uint32_t mcus_per_row;
+  uint32_t mcu_index;   /* next MCU in the output stream */
+  uint32_t grid;        /* cells per side of the averaging grid */
+  uint32_t width, height;
+} layout_t;
+
+/* A DMA buffer and how much of it is valid (0 = empty / free) */
+typedef struct
+{
+  uint8_t *data;
+  volatile uint32_t len;
+} chunk_t;
+
+static QueueHandle_t      s_requests;
+static TaskHandle_t       s_task;
+static JPEG_HandleTypeDef s_jpeg;
+static DMA_HandleTypeDef  s_dma_in;
+static DMA_HandleTypeDef  s_dma_out;
+
+/* DMA buffers: DTCM, uncached */
+static uint8_t s_in_mem[2][IN_CHUNK] DMA_BUFFER;
+static uint8_t s_out_mem[2][OUT_CHUNK] DMA_BUFFER;
+static chunk_t s_in[2]  = { { s_in_mem[0], 0 }, { s_in_mem[1], 0 } };
+static chunk_t s_out[2] = { { s_out_mem[0], 0 }, { s_out_mem[1], 0 } };
+
+/* Shared between the interrupts and the task (changed with interrupts masked) */
+static volatile uint8_t s_in_read;       /* input chunk the codec reads   */
+static volatile uint8_t s_out_write;     /* output chunk the codec writes */
+static volatile bool    s_in_paused;
+static volatile bool    s_out_paused;
+static volatile bool    s_info_ready;
+static volatile bool    s_finished;      /* decoded, or failed            */
+static volatile bool    s_failed;
+static JPEG_ConfTypeDef s_info;
+
+/* Task only */
+static FIL      s_file;
+static uint32_t s_in_left;
+static uint8_t  s_in_fill;               /* input chunk the task fills next  */
+static uint8_t  s_out_read;              /* output chunk the task takes next */
+static layout_t s_layout;
+static cell_t   s_cells[SIZE * SIZE] __attribute__((section(".sdram"), aligned(4)));
+static uint16_t s_map_x[MAX_SIDE];
+static uint16_t s_map_y[MAX_SIDE];
+
+/* Two images: one is shown while the other is decoded */
+static uint8_t        s_pixels[2][SIZE * SIZE * 3] __attribute__((section(".sdram"), aligned(4)));
+static lv_image_dsc_t s_images[2];
+static uint16_t       s_backdrop_px[2][BACKDROP_W * BACKDROP_H] __attribute__((section(".sdram"), aligned(4)));
+static lv_image_dsc_t s_backdrops[2];
+static int32_t        s_tint[3];           /* colour the backdrop is washed with */
+static uint8_t        s_alpha[SIZE * SIZE];
+static uint8_t        s_next;            /* image the next decode writes */
+
+/* Result of the latest request (task writes, GUI reads) */
+static volatile uint32_t          s_done_id = UINT32_MAX;
+static volatile cover_art_state_t s_done_state;
+static volatile uint8_t           s_done_image;
+static uint32_t                   s_dropped_id = UINT32_MAX;   /* GUI only */
+
+/* ---- set-up ------------------------------------------------------------------ */
+
+/* Alpha of the rounded corners, anti-aliased */
+static void build_alpha(void)
+{
+  const float r = (float)CORNER_RADIUS;
+  for (uint32_t y = 0; y < SIZE; y++)
+  {
+    for (uint32_t x = 0; x < SIZE; x++)
+    {
+      const float px = (float)x + 0.5f;
+      const float py = (float)y + 0.5f;
+      float dx = 0.0f;
+      float dy = 0.0f;
+      if (px < r)                    dx = r - px;
+      else if (px > (float)SIZE - r) dx = px - ((float)SIZE - r);
+      if (py < r)                    dy = r - py;
+      else if (py > (float)SIZE - r) dy = py - ((float)SIZE - r);
+
+      float a = 1.0f;
+      if (dx > 0.0f && dy > 0.0f)
+      {
+        /* Coverage of the pixel: r - distance from the corner centre, over one pixel */
+        a = r - sqrtf(dx * dx + dy * dy) + 0.5f;
+        a = (a < 0.0f) ? 0.0f : (a > 1.0f ? 1.0f : a);
+      }
+      s_alpha[y * SIZE + x] = (uint8_t)(a * 255.0f + 0.5f);
+    }
+  }
+}
+
+static void dma_init(DMA_HandleTypeDef *dma, DMA_Stream_TypeDef *stream, uint32_t direction)
+{
+  dma->Instance                 = stream;
+  dma->Init.Channel             = DMA_CHANNEL_9;
+  dma->Init.Direction           = direction;
+  dma->Init.PeriphInc           = DMA_PINC_DISABLE;
+  dma->Init.MemInc              = DMA_MINC_ENABLE;
+  dma->Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+  dma->Init.MemDataAlignment    = DMA_MDATAALIGN_WORD;
+  dma->Init.Mode                = DMA_NORMAL;
+  dma->Init.Priority            = DMA_PRIORITY_HIGH;
+  dma->Init.FIFOMode            = DMA_FIFOMODE_ENABLE;
+  dma->Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
+  dma->Init.MemBurst            = DMA_MBURST_INC4;
+  dma->Init.PeriphBurst         = DMA_PBURST_INC4;
+  HAL_DMA_DeInit(dma);
+  HAL_DMA_Init(dma);
+}
+
+void HAL_JPEG_MspInit(JPEG_HandleTypeDef *hjpeg)
+{
+  __HAL_RCC_JPEG_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  dma_init(&s_dma_in, DMA2_Stream3, DMA_MEMORY_TO_PERIPH);
+  __HAL_LINKDMA(hjpeg, hdmain, s_dma_in);
+  dma_init(&s_dma_out, DMA2_Stream4, DMA_PERIPH_TO_MEMORY);
+  __HAL_LINKDMA(hjpeg, hdmaout, s_dma_out);
+
+  HAL_NVIC_SetPriority(JPEG_IRQn, IRQ_PRIORITY, 0);
+  HAL_NVIC_EnableIRQ(JPEG_IRQn);
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, IRQ_PRIORITY, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
+  HAL_NVIC_SetPriority(DMA2_Stream4_IRQn, IRQ_PRIORITY, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream4_IRQn);
+}
+
+void JPEG_IRQHandler(void)          { HAL_JPEG_IRQHandler(&s_jpeg); }
+void DMA2_Stream3_IRQHandler(void)  { HAL_DMA_IRQHandler(s_jpeg.hdmain); }
+void DMA2_Stream4_IRQHandler(void)  { HAL_DMA_IRQHandler(s_jpeg.hdmaout); }
+
+/* ---- codec callbacks (interrupt context: swap buffers, wake the task) -------- */
+
+static void wake_task_from_isr(void)
+{
+  BaseType_t woken = pdFALSE;
+  vTaskNotifyGiveFromISR(s_task, &woken);
+  portYIELD_FROM_ISR(woken);
+}
+
+void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hjpeg, JPEG_ConfTypeDef *info)
+{
+  (void)hjpeg;
+  s_info       = *info;
+  s_info_ready = true;
+  wake_task_from_isr();
+}
+
+/* The codec has consumed the input chunk: go on with the other one */
+void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hjpeg, uint32_t consumed)
+{
+  (void)consumed;
+  s_in[s_in_read].len = 0;
+  s_in_read ^= 1U;
+  if (s_in[s_in_read].len != 0U)
+  {
+    HAL_JPEG_ConfigInputBuffer(hjpeg, s_in[s_in_read].data, s_in[s_in_read].len);
+  }
+  else
+  {
+    HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_INPUT);   /* resumed by the task */
+    s_in_paused = true;
+  }
+  wake_task_from_isr();
+}
+
+/* An output chunk is full (or the last, partial one): continue in the other */
+void HAL_JPEG_DataReadyCallback(JPEG_HandleTypeDef *hjpeg, uint8_t *data, uint32_t len)
+{
+  (void)data;
+  s_out[s_out_write].len = len;
+  s_out_write ^= 1U;
+  if (s_out[s_out_write].len != 0U)
+  {
+    HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);  /* resumed by the task */
+    s_out_paused = true;
+  }
+  HAL_JPEG_ConfigOutputBuffer(hjpeg, s_out[s_out_write].data, OUT_CHUNK);
+  wake_task_from_isr();
+}
+
+void HAL_JPEG_DecodeCpltCallback(JPEG_HandleTypeDef *hjpeg)
+{
+  (void)hjpeg;
+  s_finished = true;
+  wake_task_from_isr();
+}
+
+void HAL_JPEG_ErrorCallback(JPEG_HandleTypeDef *hjpeg)
+{
+  (void)hjpeg;
+  s_failed   = true;
+  s_finished = true;
+  wake_task_from_isr();
+}
+
+/* ---- task side ----------------------------------------------------------------- */
+
+/* Read the next piece of the JPEG data into an empty input chunk */
+static void fill_input(void)
+{
+  chunk_t *c = &s_in[s_in_fill];
+  if (c->len != 0U || s_in_left == 0U)
+  {
+    return;
+  }
+  UINT got = 0;
+  const UINT want = (s_in_left < IN_CHUNK) ? (UINT)s_in_left : (UINT)IN_CHUNK;
+  if (f_read(&s_file, c->data, want, &got) != FR_OK || got == 0U)
+  {
+    s_in_left = 0;
+    return;
+  }
+  s_in_left -= got;
+  /* The codec takes whole words: pad the end of the data */
+  const uint32_t padded = (got + 3U) & ~3U;
+  memset(&c->data[got], 0, padded - got);
+  c->len = padded;
+  s_in_fill ^= 1U;
+}
+
+static void setup_layout(const JPEG_ConfTypeDef *info)
+{
+  layout_t *l = &s_layout;
+  memset(l, 0, sizeof(*l));
+  l->width  = info->ImageWidth;
+  l->height = info->ImageHeight;
+
+  if (info->ColorSpace == JPEG_GRAYSCALE_COLORSPACE)
+  {
+    l->gray = true; l->mcu_w = 8; l->mcu_h = 8; l->y_blocks = 1; l->mcu_bytes = 64;
+  }
+  else if (info->ColorSpace == JPEG_YCBCR_COLORSPACE)
+  {
+    switch (info->ChromaSubsampling)
+    {
+      case JPEG_420_SUBSAMPLING: l->mcu_w = 16; l->mcu_h = 16; l->y_blocks = 4; break;
+      case JPEG_422_SUBSAMPLING: l->mcu_w = 16; l->mcu_h = 8;  l->y_blocks = 2; break;
+      default:                   l->mcu_w = 8;  l->mcu_h = 8;  l->y_blocks = 1; break;
+    }
+    l->mcu_bytes = (l->y_blocks + 2U) * 64U;
+  }
+  else
+  {
+    LOG_WARN("cover: CMYK picture not supported");
+    return;
+  }
+
+  const uint32_t pad_w = (l->width + l->mcu_w - 1U) / l->mcu_w * l->mcu_w;
+  const uint32_t pad_h = (l->height + l->mcu_h - 1U) / l->mcu_h * l->mcu_h;
+  if (l->width == 0U || l->height == 0U || pad_w > MAX_SIDE || pad_h > MAX_SIDE)
+  {
+    LOG_WARN("cover: %lux%lu picture not supported", (unsigned long)l->width, (unsigned long)l->height);
+    return;
+  }
+  l->mcus_per_row = pad_w / l->mcu_w;
+
+  /* Centred square crop, averaged into grid x grid cells */
+  const uint32_t side = (l->width < l->height) ? l->width : l->height;
+  const uint32_t x0   = (l->width - side) / 2U;
+  const uint32_t y0   = (l->height - side) / 2U;
+  l->grid = (side < SIZE) ? side : SIZE;
+
+  for (uint32_t x = 0; x < pad_w; x++)
+  {
+    s_map_x[x] = (x >= x0 && x < x0 + side) ? (uint16_t)((x - x0) * l->grid / side) : NO_CELL;
+  }
+  for (uint32_t y = 0; y < pad_h; y++)
+  {
+    s_map_y[y] = (y >= y0 && y < y0 + side) ? (uint16_t)((y - y0) * l->grid / side) : NO_CELL;
+  }
+  memset(s_cells, 0, sizeof(cell_t) * l->grid * l->grid);
+  l->ok = true;
+}
+
+/* Add the samples of one MCU to the cells they fall into */
+static void collect_mcu(const uint8_t *mcu)
+{
+  const layout_t *l = &s_layout;
+  const uint32_t mx = (l->mcu_index % l->mcus_per_row) * l->mcu_w;
+  const uint32_t my = (l->mcu_index / l->mcus_per_row) * l->mcu_h;
+  const uint8_t *cb = mcu + l->y_blocks * 64U;
+  const uint8_t *cr = cb + 64U;
+  const uint32_t blocks_per_row = l->mcu_w / 8U;
+
+  if (my >= MAX_SIDE)
+  {
+    return;
+  }
+  for (uint32_t py = 0; py < l->mcu_h; py++)
+  {
+    const uint16_t cy = s_map_y[my + py];
+    if (cy == NO_CELL)
+    {
+      continue;
+    }
+    cell_t *row = &s_cells[cy * l->grid];
+    for (uint32_t px = 0; px < l->mcu_w; px++)
+    {
+      const uint16_t cx = s_map_x[mx + px];
+      if (cx == NO_CELL)
+      {
+        continue;
+      }
+      const uint32_t block = (py / 8U) * blocks_per_row + px / 8U;
+      cell_t *c = &row[cx];
+      c->y += mcu[block * 64U + (py % 8U) * 8U + (px % 8U)];
+      if (!l->gray)
+      {
+        /* Chroma: one 8x8 block covering the whole MCU */
+        const uint32_t ci = (py * 8U / l->mcu_h) * 8U + (px * 8U / l->mcu_w);
+        c->cb += cb[ci];
+        c->cr += cr[ci];
+      }
+      c->n++;
+    }
+  }
+}
+
+/* Average the full output chunks, in order, and hand them back to the codec */
+static void drain_output(void)
+{
+  while (s_out[s_out_read].len != 0U)
+  {
+    chunk_t *c = &s_out[s_out_read];
+    layout_t *l = &s_layout;
+    if (l->ok)
+    {
+      for (uint32_t i = 0; i + l->mcu_bytes <= c->len; i += l->mcu_bytes)
+      {
+        collect_mcu(&c->data[i]);
+        l->mcu_index++;
+      }
+    }
+    c->len = 0;
+    s_out_read ^= 1U;
+  }
+}
+
+/* Resume a side of the codec that the interrupt paused, once it can go on */
+static void resume_codec(void)
+{
+  taskENTER_CRITICAL();
+  if (s_out_paused && s_out[s_out_write].len == 0U)
+  {
+    s_out_paused = false;
+    HAL_JPEG_Resume(&s_jpeg, JPEG_PAUSE_RESUME_OUTPUT);
+  }
+  if (s_in_paused && s_in[s_in_read].len != 0U)
+  {
+    s_in_paused = false;
+    HAL_JPEG_ConfigInputBuffer(&s_jpeg, s_in[s_in_read].data, s_in[s_in_read].len);
+    HAL_JPEG_Resume(&s_jpeg, JPEG_PAUSE_RESUME_INPUT);
+  }
+  taskEXIT_CRITICAL();
+}
+
+static inline uint8_t clamp8(int32_t v)
+{
+  return (uint8_t)((v < 0) ? 0 : (v > 255 ? 255 : v));
+}
+
+/* Cells -> RGB565A8 image @p index */
+static void render(uint8_t index)
+{
+  const layout_t *l = &s_layout;
+  uint16_t *rgb   = (uint16_t *)s_pixels[index];
+  uint8_t  *alpha = s_pixels[index] + SIZE * SIZE * 2U;
+
+  for (uint32_t ty = 0; ty < SIZE; ty++)
+  {
+    const cell_t *row = &s_cells[(ty * l->grid / SIZE) * l->grid];
+    for (uint32_t tx = 0; tx < SIZE; tx++)
+    {
+      const cell_t *c = &row[tx * l->grid / SIZE];
+      const int32_t n  = (c->n != 0U) ? (int32_t)c->n : 1;
+      const int32_t y  = (int32_t)c->y / n;
+      const int32_t cb = l->gray ? 0 : (int32_t)c->cb / n - 128;
+      const int32_t cr = l->gray ? 0 : (int32_t)c->cr / n - 128;
+      /* BT.601 full range, 16.16 fixed point */
+      const uint8_t r = clamp8(y + ((91881 * cr) >> 16));
+      const uint8_t g = clamp8(y - ((22554 * cb + 46802 * cr) >> 16));
+      const uint8_t b = clamp8(y + ((116130 * cb) >> 16));
+      rgb[ty * SIZE + tx] = (uint16_t)(((r & 0xF8U) << 8) | ((g & 0xFCU) << 3) | (b >> 3));
+    }
+  }
+  memcpy(alpha, s_alpha, sizeof(s_alpha));
+}
+
+/* 4x4 ordered dither: smooth gradients without RGB565 banding */
+static const uint8_t k_bayer[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+
+/* Blurred, washed-out copy of cover @p index filling the backdrop: the cover
+ * averaged into BLUR_GRID x BLUR_GRID blocks, scaled up with bilinear
+ * interpolation (which makes the blur), and mixed with the tint colour. */
+static void render_backdrop(uint8_t index)
+{
+  static int32_t blocks[BLUR_GRID][BLUR_GRID][3];
+  const uint16_t *cover = (const uint16_t *)s_pixels[index];
+
+  for (uint32_t by = 0; by < BLUR_GRID; by++)
+  {
+    for (uint32_t bx = 0; bx < BLUR_GRID; bx++)
+    {
+      int32_t sum[3] = { 0, 0, 0 };
+      int32_t n = 0;
+      for (uint32_t y = by * SIZE / BLUR_GRID; y < (by + 1U) * SIZE / BLUR_GRID; y++)
+      {
+        for (uint32_t x = bx * SIZE / BLUR_GRID; x < (bx + 1U) * SIZE / BLUR_GRID; x++)
+        {
+          const uint16_t p = cover[y * SIZE + x];
+          sum[0] += (p >> 8) & 0xF8;
+          sum[1] += (p >> 3) & 0xFC;
+          sum[2] += (p << 3) & 0xF8;
+          n++;
+        }
+      }
+      for (uint32_t c = 0; c < 3U; c++)
+      {
+        /* Already mixed with the tint, so the per-pixel loop only interpolates */
+        const int32_t avg = sum[c] / (n ? n : 1);
+        blocks[by][bx][c] = (avg * BACKDROP_MIX + s_tint[c] * (256 - BACKDROP_MIX)) >> 8;
+      }
+    }
+  }
+
+  /* The square cover is stretched to the backdrop width, centred vertically */
+  uint16_t *out = s_backdrop_px[index];
+  const int32_t max = (BLUR_GRID - 1) * 256;
+  for (uint32_t y = 0; y < BACKDROP_H; y++)
+  {
+    int32_t v = (int32_t)(((y + (BACKDROP_W - BACKDROP_H) / 2U) * BLUR_GRID * 256U) / BACKDROP_W) - 128;
+    v = LV_CLAMP(0, v, max);
+    const int32_t y0 = v >> 8;
+    const int32_t y1 = (y0 < BLUR_GRID - 1) ? y0 + 1 : y0;
+    const int32_t fy = v & 255;
+
+    int32_t row[BLUR_GRID][3];
+    for (int32_t bx = 0; bx < BLUR_GRID; bx++)
+    {
+      for (uint32_t c = 0; c < 3U; c++)
+      {
+        row[bx][c] = (blocks[y0][bx][c] * (256 - fy) + blocks[y1][bx][c] * fy) >> 8;
+      }
+    }
+    for (uint32_t x = 0; x < BACKDROP_W; x++)
+    {
+      int32_t u = (int32_t)((x * BLUR_GRID * 256U) / BACKDROP_W) - 128;
+      u = LV_CLAMP(0, u, max);
+      const int32_t x0 = u >> 8;
+      const int32_t x1 = (x0 < BLUR_GRID - 1) ? x0 + 1 : x0;
+      const int32_t fx = u & 255;
+      const int32_t d  = k_bayer[y & 3U][x & 3U];
+      int32_t rgb[3];
+      for (uint32_t c = 0; c < 3U; c++)
+      {
+        rgb[c] = ((row[x0][c] * (256 - fx) + row[x1][c] * fx) >> 8) + (c == 1U ? d / 4 : d / 2);
+      }
+      const uint32_t r = (uint32_t)LV_MIN(rgb[0], 255);
+      const uint32_t g = (uint32_t)LV_MIN(rgb[1], 255);
+      const uint32_t b = (uint32_t)LV_MIN(rgb[2], 255);
+      out[y * BACKDROP_W + x] = (uint16_t)(((r & 0xF8U) << 8) | ((g & 0xFCU) << 3) | (b >> 3));
+    }
+  }
+}
+
+/* Stop the codec and its DMA, and start again from a clean state (after an
+ * error, a timeout, or a picture that is not supported) */
+static void reset_codec(void)
+{
+  HAL_JPEG_Abort(&s_jpeg);
+  HAL_JPEG_DeInit(&s_jpeg);
+  if (HAL_JPEG_Init(&s_jpeg) != HAL_OK)
+  {
+    LOG_ERROR("cover: JPEG codec re-initialisation failed");
+  }
+}
+
+/* Decode the picture of @p req into image @p index */
+static bool decode(const request_t *req, uint8_t index)
+{
+  if (req->format != 1U || f_open(&s_file, req->path, FA_READ) != FR_OK)
+  {
+    return false;   /* PNG, none, or no file */
+  }
+  memset(&s_layout, 0, sizeof(s_layout));
+  s_in[0].len = s_in[1].len = 0;
+  s_out[0].len = s_out[1].len = 0;
+  s_in_read = s_in_fill = 0;
+  s_out_write = s_out_read = 0;
+  s_in_paused = s_out_paused = false;
+  s_info_ready = s_finished = s_failed = false;
+  s_in_left = req->size;
+  (void)ulTaskNotifyTake(pdTRUE, 0);
+
+  bool ok = false;
+  if (f_lseek(&s_file, req->offset) == FR_OK)
+  {
+    fill_input();
+    fill_input();
+  }
+  if (s_in[0].len != 0U)
+  {
+    const TickType_t start = xTaskGetTickCount();
+    if (HAL_JPEG_Decode_DMA(&s_jpeg, s_in[0].data, s_in[0].len, s_out[0].data, OUT_CHUNK) == HAL_OK)
+    {
+      bool timed_out   = false;
+      bool rejected    = false;
+      bool layout_done = false;
+      while (!s_finished)
+      {
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(DECODE_TIMEOUT_MS)) == 0U)
+        {
+          timed_out = true;
+          break;
+        }
+        /* Once per picture: an unsupported one stops the decoding at once */
+        if (s_info_ready && !layout_done)
+        {
+          layout_done = true;
+          setup_layout(&s_info);
+          if (!s_layout.ok)
+          {
+            rejected = true;
+            break;
+          }
+        }
+        drain_output();
+        fill_input();
+        resume_codec();
+      }
+      drain_output();   /* the last chunk */
+
+      if (timed_out || s_failed || rejected)
+      {
+        if (!rejected)
+        {
+          LOG_WARN("cover: JPEG decoding %s (error 0x%lx)", timed_out ? "timed out" : "failed",
+                   (unsigned long)HAL_JPEG_GetError(&s_jpeg));
+        }
+        reset_codec();
+      }
+      else if (s_layout.ok && s_layout.mcu_index > 0U)
+      {
+        render(index);
+        /* The backdrop takes a while: let the GUI run meanwhile */
+        vTaskPrioritySet(NULL, BACKDROP_PRIORITY);
+        render_backdrop(index);
+        vTaskPrioritySet(NULL, TASK_PRIORITY);
+        ok = true;
+        LOG_INFO("cover: %lux%lu JPEG in %lu ms", (unsigned long)s_layout.width,
+                 (unsigned long)s_layout.height, (unsigned long)(xTaskGetTickCount() - start));
+      }
+    }
+  }
+  f_close(&s_file);
+  return ok;
+}
+
+static void cover_task(void *arg)
+{
+  (void)arg;
+  for (;;)
+  {
+    request_t req;
+    xQueueReceive(s_requests, &req, portMAX_DELAY);
+
+    const uint8_t index = s_next;
+    const bool ok = decode(&req, index);
+    if (ok)
+    {
+      s_next ^= 1U;
+    }
+
+    taskENTER_CRITICAL();
+    s_done_image = index;
+    s_done_state = ok ? COVER_ART_READY : COVER_ART_NONE;
+    s_done_id    = req.id;
+    taskEXIT_CRITICAL();
+  }
+}
+
+/* ---- public API -------------------------------------------------------------- */
+
+void cover_art_init(uint32_t backdrop_tint)
+{
+  build_alpha();
+  s_tint[0] = (int32_t)((backdrop_tint >> 16) & 0xFFU);
+  s_tint[1] = (int32_t)((backdrop_tint >> 8) & 0xFFU);
+  s_tint[2] = (int32_t)(backdrop_tint & 0xFFU);
+  for (uint32_t i = 0; i < 2U; i++)
+  {
+    lv_image_dsc_t *img = &s_images[i];
+    memset(img, 0, sizeof(*img));
+    img->header.magic  = LV_IMAGE_HEADER_MAGIC;
+    img->header.cf     = LV_COLOR_FORMAT_RGB565A8;
+    img->header.w      = SIZE;
+    img->header.h      = SIZE;
+    img->header.stride = SIZE * 2U;
+    img->data          = s_pixels[i];
+    img->data_size     = sizeof(s_pixels[i]);
+
+    lv_image_dsc_t *bd = &s_backdrops[i];
+    memset(bd, 0, sizeof(*bd));
+    bd->header.magic  = LV_IMAGE_HEADER_MAGIC;
+    bd->header.cf     = LV_COLOR_FORMAT_RGB565;
+    bd->header.w      = BACKDROP_W;
+    bd->header.h      = BACKDROP_H;
+    bd->header.stride = BACKDROP_W * 2U;
+    bd->data          = (const uint8_t *)s_backdrop_px[i];
+    bd->data_size     = sizeof(s_backdrop_px[i]);
+  }
+
+  s_requests = xQueueCreate(1, sizeof(request_t));
+  configASSERT(s_requests != NULL);
+  if (xTaskCreate(cover_task, "cover", TASK_STACK_WORDS, NULL, TASK_PRIORITY, &s_task) != pdPASS)
+  {
+    configASSERT(0);
+  }
+
+  s_jpeg.Instance = JPEG;
+  if (HAL_JPEG_Init(&s_jpeg) != HAL_OK)
+  {
+    LOG_ERROR("cover: JPEG codec initialisation failed");
+  }
+}
+
+void cover_art_request(uint32_t id, const char *path, uint8_t format, uint32_t offset, uint32_t size)
+{
+  static request_t req;   /* large: not on the caller's stack */
+  req.id     = id;
+  req.format = format;
+  req.offset = offset;
+  req.size   = size;
+  strncpy(req.path, path, sizeof(req.path) - 1U);
+  req.path[sizeof(req.path) - 1U] = '\0';
+  /* Only the latest request matters */
+  xQueueOverwrite(s_requests, &req);
+}
+
+cover_art_state_t cover_art_poll(uint32_t id, const lv_image_dsc_t **image, const lv_image_dsc_t **backdrop)
+{
+  taskENTER_CRITICAL();
+  const uint32_t          done_id = s_done_id;
+  const cover_art_state_t state   = s_done_state;
+  const uint8_t           index   = s_done_image;
+  taskEXIT_CRITICAL();
+
+  if (done_id != id)
+  {
+    return COVER_ART_PENDING;
+  }
+  if (state == COVER_ART_READY)
+  {
+    /* Same descriptor, new pixels: drop what LVGL may have cached for it */
+    if (s_dropped_id != id)
+    {
+      lv_image_cache_drop(&s_images[index]);
+      lv_image_cache_drop(&s_backdrops[index]);
+      s_dropped_id = id;
+    }
+    *image    = &s_images[index];
+    *backdrop = &s_backdrops[index];
+  }
+  return state;
+}

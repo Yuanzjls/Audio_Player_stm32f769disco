@@ -16,10 +16,23 @@ extern "C" {
 
 #define ID3_TEXT_MAX 128
 
+/** Format of an embedded picture */
+typedef enum
+{
+  ID3_ART_NONE,
+  ID3_ART_JPEG,
+  ID3_ART_PNG,
+} id3_art_format_t;
+
 typedef struct
 {
   char title[ID3_TEXT_MAX];    /* UTF-8, empty if absent */
   char artist[ID3_TEXT_MAX];
+  /* Embedded picture (APIC/PIC frame): where its image data is in the file.
+   * The front cover is preferred over other pictures. */
+  id3_art_format_t art_format;
+  uint32_t         art_offset;
+  uint32_t         art_size;
 } id3_tags_t;
 
 /**

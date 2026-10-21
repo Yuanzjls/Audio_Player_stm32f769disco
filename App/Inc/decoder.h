@@ -30,6 +30,10 @@ typedef struct
   bool        duration_exact;    /**< false: estimate, refined by decoder_poll()     */
   char        title[DECODER_TEXT_MAX];   /**< from tags, UTF-8, may be empty         */
   char        artist[DECODER_TEXT_MAX];
+  /* Embedded cover picture, if any: format and where its data is in the file */
+  uint8_t     art_format;        /**< id3_art_format_t: 0 = none, 1 = JPEG, 2 = PNG  */
+  uint32_t    art_offset;
+  uint32_t    art_size;
 } decoder_info_t;
 
 /** True if the file name has an extension a decoder handles. */

@@ -402,6 +402,9 @@ static bool mp3_open(FIL *file, const char *path, decoder_info_t *info)
   info->duration_exact = (m.total_frames != 0U);
   snprintf(info->title, sizeof(info->title), "%s", tags.title);
   snprintf(info->artist, sizeof(info->artist), "%s", tags.artist);
+  info->art_format = (uint8_t)tags.art_format;
+  info->art_offset = tags.art_offset;
+  info->art_size   = tags.art_size;
   return true;
 }
 

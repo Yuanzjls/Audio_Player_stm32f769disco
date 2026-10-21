@@ -2,7 +2,8 @@
 
 A touch-screen music player for the STM32F769I-Discovery board. It plays `.wav` and `.mp3` files from the
 microSD card through the headphone jack, with play/pause, previous/next, repeat-one, shuffle (on by default, starting at a random song), a seek bar, volume
-control and a 32-band spectrum analyser. The library panel folds away, and a status line shows the
+control and a 32-band spectrum analyser. The cover picture embedded in the song is shown, with a
+blurred copy of it behind the player. The library (up to 4096 songs) folds away, and a status line shows the
 CPU load and memory use. The UI is built with [LVGL](https://lvgl.io) 9 and runs on FreeRTOS. Song titles in any
 language (e.g. Chinese) are drawn with a TrueType font loaded from the SD card.
 
@@ -10,7 +11,8 @@ Supported files:
 * **WAV**: PCM 16-bit, mono or stereo, 8 – 96 kHz.
 * **MP3**: MPEG-1/2/2.5 Layer III, constant or variable bitrate, mono or stereo, 8 – 48 kHz.
   Title and artist come from ID3v2 / ID3v1 tags (UTF-8, UTF-16 and GBK text), otherwise from
-  "Artist - Title" file names. The length is exact from a Xing/VBRI header, or measured by a
+  "Artist - Title" file names. The cover is the embedded ID3 picture (baseline JPEG; PNG and
+  progressive JPEG get a placeholder). The length is exact from a Xing/VBRI header, or measured by a
   background scan while the song plays.
 
 Hardware: STM32F769I-Discovery with the OTM8009A display (MB1166 revisions up to A-08). Later
@@ -66,11 +68,11 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `ui` (LVGL screen) |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures with the hardware JPEG codec), `ui` (LVGL screen) |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
-| `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied) |
+| `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied); `HAL_Patches/`: a HAL file built in place of ST's (shorter SD command timeout, see its header) |
 | `FATFS/` | FatFs, with the SD-card glue in `diskio.c` and the settings in `ffconf.h` |
 
 Tasks: `player` (priority 3) streams audio; `gui` (priority 1) runs LVGL. The UI only talks to the
@@ -84,8 +86,9 @@ there is nothing to do:
 | Part | Mechanism |
 |---|---|
 | Audio | SAI1 circular DMA; half/full-transfer interrupts wake the `player` task to decode the next half (MP3 decoding takes ~6 % CPU). Clocked from PLLI2S for the exact 44.1 kHz or 48 kHz family. |
-| SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA buffers live in DTCM, which is never cached; reads into other (cached) memory go through a bounce buffer there. |
+| SD card | SDMMC2 DMA; the completion interrupt releases a semaphore. DMA buffers live in DTCM, which is never cached; reads into other (cached) memory go through a bounce buffer there. A failed read is retried, after re-initialising the card if needed. |
 | Display | DSI adapted command mode: on the panel's tearing-effect interrupt the finished LVGL frame (double-buffered in SDRAM) is sent in 4 tear-free stripes. Nothing is sent while the screen is unchanged, and LVGL sleeps (instead of spinning) until a frame buffer is free again. |
+| Cover | The hardware JPEG codec, fed and drained by DMA; its interrupts wake the `cover` task, which averages the output into the 160 px cover and renders the blurred backdrop. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
 | Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
 

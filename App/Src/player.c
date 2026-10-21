@@ -92,9 +92,13 @@ static uint32_t s_output_rate;          /* rate the output is configured for, 0 
 
 static uint16_t track_count(void);
 
-/* Library: file names of the playable tracks, sorted. Written once by the
- * player task (scan_library) before track_count is published, read-only after. */
-static char s_names[PLAYER_MAX_TRACKS][PLAYER_TITLE_MAX] __attribute__((section(".sdram")));
+/* Library: file names of the playable tracks in directory order, and the
+ * sorted order (indices into s_names: sorting moves 2 bytes per name, not 256).
+ * Written once by the player task (scan_library) before track_count is
+ * published, read-only after. NAME(i) is the i-th track in sorted order. */
+static char     s_names[PLAYER_MAX_TRACKS][PLAYER_TITLE_MAX] __attribute__((section(".sdram")));
+static uint16_t s_sorted[PLAYER_MAX_TRACKS] __attribute__((section(".sdram")));
+#define NAME(i) s_names[s_sorted[i]]
 
 /* Shuffle: play order (a permutation of the track indices) and the position in
  * it of the current track. Player task only. */
@@ -152,7 +156,7 @@ static size_t base_name_len(const char *name)
 
 static int compare_names(const void *a, const void *b)
 {
-  return strcasecmp((const char *)a, (const char *)b);
+  return strcasecmp(s_names[*(const uint16_t *)a], s_names[*(const uint16_t *)b]);
 }
 
 /* Read the music folder into s_names (sorted, case-insensitive). Returns the count. */
@@ -178,11 +182,12 @@ static uint16_t scan_library(void)
       break;
     }
     snprintf(s_names[count], PLAYER_TITLE_MAX, "%s", info.fname);
+    s_sorted[count] = count;
     count++;
   }
   f_closedir(&dir);
 
-  qsort(s_names, count, PLAYER_TITLE_MAX, compare_names);
+  qsort(s_sorted, count, sizeof(s_sorted[0]), compare_names);
   return count;
 }
 
@@ -206,7 +211,7 @@ static bool open_track(uint16_t index)
   {
     return false;
   }
-  snprintf(name, sizeof(name), "%s", s_names[index]);
+  snprintf(name, sizeof(name), "%s", NAME(index));
 
   snprintf(path, sizeof(path), "%s/%s", PLAYER_MUSIC_DIR, name);
   if (!decoder_open(path, &s_track.info))
@@ -241,6 +246,9 @@ static bool open_track(uint16_t index)
   snprintf(s_status.format, sizeof(s_status.format), "%s", info->format);
   snprintf(s_status.title, sizeof(s_status.title), "%s", info->title[0] != '\0' ? info->title : name);
   snprintf(s_status.artist, sizeof(s_status.artist), "%s", info->artist);
+  s_status.art_format = info->art_format;
+  s_status.art_offset = info->art_offset;
+  s_status.art_size   = info->art_size;
   status_unlock();
 
   LOG_INFO("player: [%u] %s (%s %lu Hz, %u ch, %lu kbps%s, %lu s%s)", (unsigned)index + 1U, name,
@@ -841,7 +849,21 @@ bool player_get_track_name(uint16_t index, char *name, size_t len)
   if (index < s_status.track_count && len > 0U)
   {
     /* File name without its extension */
-    snprintf(name, len, "%.*s", (int)base_name_len(s_names[index]), s_names[index]);
+    snprintf(name, len, "%.*s", (int)base_name_len(NAME(index)), NAME(index));
+    ok = true;
+  }
+  status_unlock();
+  return ok;
+}
+
+bool player_get_track_path(uint16_t index, char *path, size_t len)
+{
+  bool ok = false;
+
+  status_lock();
+  if (index < s_status.track_count && len > 0U)
+  {
+    snprintf(path, len, "%s/%s", PLAYER_MUSIC_DIR, NAME(index));
     ok = true;
   }
   status_unlock();

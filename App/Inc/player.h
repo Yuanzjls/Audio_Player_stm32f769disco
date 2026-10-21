@@ -19,7 +19,7 @@ extern "C" {
 
 #define PLAYER_MUSIC_DIR   "/Music"
 #define PLAYER_TITLE_MAX   256   /* bytes, UTF-8, including terminator */
-#define PLAYER_MAX_TRACKS  512   /* library size limit (names cached in SDRAM) */
+#define PLAYER_MAX_TRACKS  4096  /* library size limit (names cached in SDRAM: 1 MB) */
 #define PLAYER_MESSAGE_MAX 64
 
 typedef enum
@@ -57,6 +57,9 @@ typedef struct
   char            title[PLAYER_TITLE_MAX];   /**< tag title, else the file name */
   char            artist[PLAYER_TITLE_MAX];  /**< tag artist, may be empty       */
   char            message[PLAYER_MESSAGE_MAX]; /**< error / hint for the user, may be empty */
+  uint8_t         art_format;    /**< embedded cover: 0 = none, 1 = JPEG, 2 = PNG */
+  uint32_t        art_offset;    /**< position of the cover image in the file      */
+  uint32_t        art_size;
 } player_status_t;
 
 /** Create the player task. It mounts the SD card and starts playing once
@@ -76,8 +79,11 @@ void player_prev(void);
 /** Play track @p index of the library (0-based). */
 void player_play_track(uint16_t index);
 
-/** Copy the display name (file name without .wav) of library entry @p index. */
+/** Copy the display name (file name without its extension) of library entry @p index. */
 bool player_get_track_name(uint16_t index, char *name, size_t len);
+
+/** Copy the full path of the file of library entry @p index. */
+bool player_get_track_path(uint16_t index, char *path, size_t len);
 void player_seek(uint32_t position_s);
 void player_set_volume(uint8_t volume);
 void player_set_repeat(player_repeat_t repeat);

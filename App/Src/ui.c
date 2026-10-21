@@ -4,14 +4,19 @@
  *
  *   +-----------------+------------------------------------------+
  *   | Library   60    | NOW PLAYING              12 / 60  44.1k  |
- *   |  > Song 1       |  +-----+  Artist                         |
- *   |    Song 2       |  |  ♪  |  Title                          |
- *   |    ...          |  +-----+                                 |
- *   |                 |  ▂▅▇▃▆▂▁▄▆▅▃▂▁  spectrum                 |
+ *   |  > Song 1       |  +---------+  Artist                     |
+ *   |    Song 2       |  |         |  Title                      |
+ *   |    ...          |  |  cover  |                             |
+ *   |                 |  |         |  ▂▅▇▃▆▂▁▄▆▅▃▂▁  spectrum     |
+ *   |                 |  +---------+                             |
  *   |                 |  ●━━━━━━━━○─────────────────  seek       |
- *   |                 |     (↻)  (⏮)  ( ▶ )  (⏭)                 |
+ *   |                 |     (↻)  (⏮)  ( ▶ )  (⏭)  (⤮)            |
  *   |                 |  🔈 ━━━━━━○────────  20                  |
  *   +-----------------+------------------------------------------+
+ *
+ * The cover shows the picture embedded in the music file (decoded by the
+ * hardware JPEG codec, see cover_art.c), or a note when there is none; a
+ * blurred, washed-out copy of it fills the now-playing panel behind the rest.
  *
  * The UI never touches the audio hardware: it sends commands through the
  * player API and refreshes itself from player_get_status() on a timer.
@@ -26,6 +31,7 @@
 #include <string.h>
 
 #include "lvgl.h"
+#include "cover_art.h"
 #include "log.h"
 #include "player.h"
 #include "spectrum.h"
@@ -43,11 +49,11 @@
 #define PANEL_X             LIBRARY_WIDTH
 #define PANEL_WIDTH         (800 - LIBRARY_WIDTH)
 #define PANEL_PAD           28
-#define COVER_SIZE          88
+#define COVER_SIZE          COVER_ART_SIZE   /* 160 */
 #define COVER_Y             64
 #define ARTIST_Y            68
 #define TITLE_Y             102
-#define SPECTRUM_Y          156
+#define SPECTRUM_Y          (COVER_Y + COVER_SIZE - SPECTRUM_HEIGHT)   /* beside the cover, bottom-aligned */
 #define SPECTRUM_HEIGHT     64
 #define SEEK_Y              240
 #define TRANSPORT_Y         302
@@ -99,6 +105,9 @@ typedef struct
   /* now playing */
   lv_obj_t *track_info;     /* "12 / 60   44.1 kHz stereo" */
   lv_obj_t *cover;
+  lv_obj_t *cover_note;     /* shown when there is no picture */
+  lv_obj_t *cover_image;
+  lv_obj_t *backdrop;       /* blurred cover behind the now-playing panel */
   lv_obj_t *artist;
   lv_obj_t *title;
   lv_obj_t *message;
@@ -140,6 +149,8 @@ static lv_obj_t  *s_list_spacer;
 static bool       s_first_refresh = true;
 static uint32_t   s_shown_position = UINT32_MAX;   /* seconds shown by the position label */
 static int32_t    s_last_volume_sent = -1;
+static uint32_t   s_cover_id = UINT32_MAX;     /* track serial whose cover is wanted */
+static bool       s_cover_done = true;
 static bool       s_fonts_tried;
 static lv_font_t *s_title_font;               /* NULL until loaded */
 static lv_font_t *s_text_font;
@@ -430,6 +441,56 @@ static void highlight_library_row(int32_t index)
   }
 }
 
+/* ---- cover ----------------------------------------------------------------- */
+
+/* The picture (rounded like the tile) in place of the note and its blurred copy
+ * behind the panel, or (NULL) the note and the plain panel back */
+static void show_cover(const lv_image_dsc_t *image, const lv_image_dsc_t *backdrop)
+{
+  if (image != NULL)
+  {
+    lv_image_set_src(s_ui.cover_image, image);
+    lv_image_set_src(s_ui.backdrop, backdrop);
+  }
+  lv_obj_set_hidden(s_ui.cover_image, image == NULL);
+  lv_obj_set_hidden(s_ui.backdrop, image == NULL);
+  lv_obj_set_hidden(s_ui.cover_note, image != NULL);
+  lv_obj_set_style_bg_opa(s_ui.cover, image != NULL ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+}
+
+/* Ask the cover task for the picture of the new track. The previous cover
+ * stays until the result is known (no flash of the plain panel in between). */
+static void request_cover(const player_status_t *st)
+{
+  char path[sizeof(PLAYER_MUSIC_DIR) + PLAYER_TITLE_MAX + 1];
+
+  s_cover_id   = st->track_serial;
+  s_cover_done = false;
+  if (!player_get_track_path(st->track_index, path, sizeof(path)))
+  {
+    s_cover_done = true;
+    show_cover(NULL, NULL);
+    return;
+  }
+  cover_art_request(st->track_serial, path, st->art_format, st->art_offset, st->art_size);
+}
+
+static void poll_cover(void)
+{
+  if (s_cover_done)
+  {
+    return;
+  }
+  const lv_image_dsc_t *image    = NULL;
+  const lv_image_dsc_t *backdrop = NULL;
+  const cover_art_state_t state = cover_art_poll(s_cover_id, &image, &backdrop);
+  if (state != COVER_ART_PENDING)
+  {
+    s_cover_done = true;
+    show_cover(state == COVER_ART_READY ? image : NULL, backdrop);
+  }
+}
+
 /* ---- refresh --------------------------------------------------------------- */
 
 static void set_duration(uint32_t duration_s)
@@ -464,6 +525,7 @@ static void refresh_track(const player_status_t *st)
 
   set_duration(st->duration_s);
   highlight_library_row(st->track_index);
+  request_cover(st);
 }
 
 static void set_controls_enabled(bool enabled)
@@ -571,6 +633,7 @@ static void refresh_cb(lv_timer_t *timer)
   }
 
   s_status = st;
+  poll_cover();
 }
 
 /* ---- spectrum ---------------------------------------------------------------- */
@@ -774,8 +837,16 @@ static void build_now_playing(lv_obj_t *scr)
   lv_obj_set_pos(panel, PANEL_X, 0);
   s_ui.now_playing = panel;
 
+  /* Backdrop: the blurred cover behind everything else (first child), centred so
+   * that it fills the panel at either width (library shown or folded away) */
+  s_ui.backdrop = lv_image_create(panel);
+  lv_obj_align(s_ui.backdrop, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_hidden(s_ui.backdrop, true);
+
   /* Header: library fold button, caption */
   s_ui.btn_fold = make_box(panel, COLOR_BG);
+  lv_obj_set_style_bg_opa(s_ui.btn_fold, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_bg_opa(s_ui.btn_fold, LV_OPA_COVER, LV_STATE_PRESSED);
   lv_obj_set_size(s_ui.btn_fold, 44, 40);
   lv_obj_set_pos(s_ui.btn_fold, PANEL_PAD - 10, 12);
   lv_obj_set_clickable(s_ui.btn_fold, true);
@@ -804,9 +875,12 @@ static void build_now_playing(lv_obj_t *scr)
   lv_obj_set_style_radius(s_ui.cover, 16, 0);
   lv_obj_set_style_bg_grad_color(s_ui.cover, COLOR_ACCENT_DARK, 0);
   lv_obj_set_style_bg_grad_dir(s_ui.cover, LV_GRAD_DIR_VER, 0);
-  lv_obj_t *note = make_label(s_ui.cover, &lv_font_montserrat_40, COLOR_ON_ACCENT);
-  lv_label_set_text(note, LV_SYMBOL_AUDIO);
-  lv_obj_center(note);
+  s_ui.cover_note = make_label(s_ui.cover, &lv_font_montserrat_40, COLOR_ON_ACCENT);
+  lv_label_set_text(s_ui.cover_note, LV_SYMBOL_AUDIO);
+  lv_obj_center(s_ui.cover_note);
+  s_ui.cover_image = lv_image_create(s_ui.cover);
+  lv_obj_center(s_ui.cover_image);
+  lv_obj_set_hidden(s_ui.cover_image, true);
 
   /* Artist / title next to the cover (widths set in layout_now_playing) */
   const int32_t text_x = PANEL_PAD + COVER_SIZE + 20;
@@ -824,11 +898,12 @@ static void build_now_playing(lv_obj_t *scr)
   lv_obj_set_pos(s_ui.message, text_x, ARTIST_Y + 14);
   lv_obj_set_hidden(s_ui.message, true);
 
-  /* Spectrum strip (drawn in on_spectrum_draw). Opaque, so that LVGL redraws its
-   * changed bars starting from the strip instead of from the whole panel. */
+  /* Spectrum strip beside the cover (drawn in on_spectrum_draw). Transparent: the
+   * backdrop shows through; redrawing it under the bars is a plain copy. */
   s_ui.spectrum = make_box(panel, COLOR_BG);
+  lv_obj_set_style_bg_opa(s_ui.spectrum, LV_OPA_TRANSP, 0);
   lv_obj_set_height(s_ui.spectrum, SPECTRUM_HEIGHT);
-  lv_obj_set_pos(s_ui.spectrum, PANEL_PAD, SPECTRUM_Y);
+  lv_obj_set_pos(s_ui.spectrum, text_x, SPECTRUM_Y);
   lv_obj_add_event_cb(s_ui.spectrum, on_spectrum_draw, LV_EVENT_DRAW_MAIN, NULL);
   for (uint32_t b = 0; b < SPECTRUM_BANDS; b++)
   {
@@ -853,6 +928,7 @@ static void build_now_playing(lv_obj_t *scr)
 
   /* Transport: repeat, previous, play/pause, next, shuffle */
   lv_obj_t *row = make_box(panel, COLOR_BG);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
   s_ui.transport = row;
   lv_obj_set_height(row, 96);
   lv_obj_set_pos(row, 0, TRANSPORT_Y);
@@ -912,7 +988,7 @@ static void layout_now_playing(int32_t w)
   lv_obj_set_width(s_ui.artist, text_w);
   lv_obj_set_width(s_ui.title, text_w);
   lv_obj_set_width(s_ui.message, text_w);
-  lv_obj_set_width(s_ui.spectrum, full_w);
+  lv_obj_set_width(s_ui.spectrum, text_w);
   lv_obj_set_width(s_ui.seek, full_w);
   lv_obj_set_width(s_ui.transport, w);
   /* Volume: room for the icon on the left and "100" on the right inside the padding */
@@ -974,6 +1050,7 @@ void ui_init(void)
   lv_obj_set_scrollable(scr, false);
 
   player_get_status(&s_status);
+  cover_art_init(0xF4F6F9);   /* COLOR_BG: backdrops are washed towards the panel colour */
 
   build_library_panel(scr);
   build_now_playing(scr);
