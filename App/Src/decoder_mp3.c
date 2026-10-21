@@ -22,6 +22,7 @@
 
 #define IN_BUF_SIZE        16384U
 #define REFILL_BELOW       8192U    /* keep enough data for minimp3's frame sync */
+#define FIRST_FRAME_SEARCH 65536U   /* bytes of junk skipped before the first frame */
 #define SEEK_TABLE_MAX     1024U
 #define SEEK_STEP_INITIAL  8U       /* frames per seek table entry (doubles when full) */
 #define SEEK_WARMUP_FRAMES 2U
@@ -261,7 +262,7 @@ static uint32_t decode_next(void)
       return 0U;
     }
 
-    mp3dec_frame_info_t fi;
+    mp3dec_frame_info_t fi = { 0 };
     const int samples = mp3dec_decode_frame(&m.dec, &m.in[m.in_pos], (int)avail, m.pcm, &fi);
     if (fi.frame_bytes == 0)
     {
@@ -346,23 +347,37 @@ static bool mp3_open(FIL *file, const char *path, decoder_info_t *info)
     return false;
   }
 
-  restart_at(audio_start, 0);
-  refill();
-
-  /* First frame: stream properties, and possibly a Xing/VBRI header */
+  /* First frame: stream properties, and possibly a Xing/VBRI header. Junk
+   * before it is skipped, up to FIRST_FRAME_SEARCH bytes. When minimp3 finds
+   * no frame it only reports how many bytes it skipped: the other fields of
+   * the frame info are then not set (hz stays 0). */
+  FSIZE_t search_pos = audio_start;
   mp3dec_frame_info_t fi;
-  const int samples = mp3dec_decode_frame(&m.dec, m.in, (int)m.in_len, m.pcm, &fi);
+  int samples;
   frame_header_t hdr;
-  if (fi.frame_bytes == 0 || !parse_header(&m.in[fi.frame_offset], &hdr))
+  for (;;)
   {
-    LOG_WARN("mp3: %s: no MPEG Layer III frames", path);
-    return false;
+    restart_at(search_pos, 0);
+    refill();
+    memset(&fi, 0, sizeof(fi));
+    samples = mp3dec_decode_frame(&m.dec, m.in, (int)m.in_len, m.pcm, &fi);
+    if (fi.frame_bytes > 0 && fi.hz > 0 && parse_header(&m.in[fi.frame_offset], &hdr))
+    {
+      break;
+    }
+    /* Go on after the skipped bytes, keeping 3 for a header split by the buffer end */
+    if (fi.frame_bytes <= 3 || m.in_eof || search_pos - audio_start >= FIRST_FRAME_SEARCH)
+    {
+      LOG_WARN("mp3: %s: no MPEG Layer III frames", path);
+      return false;
+    }
+    search_pos += (FSIZE_t)fi.frame_bytes - 3U;
   }
   m.hz           = hdr.hz;
   m.spf          = hdr.spf;
   m.bitrate_kbps = hdr.bitrate_kbps;
 
-  const FSIZE_t frame_pos = audio_start + (FSIZE_t)fi.frame_offset;
+  const FSIZE_t frame_pos = search_pos + (FSIZE_t)fi.frame_offset;
   const uint32_t frame_len = (uint32_t)(fi.frame_bytes - fi.frame_offset);
   bool vbr = false;
   const bool is_header = parse_vbr_header(&m.in[fi.frame_offset], frame_len, &hdr, frame_pos, &vbr);
@@ -476,7 +491,8 @@ static bool mp3_seek(uint32_t position_s, uint32_t *actual_s)
       skip = SEEK_MAX_DISCARD_FRAMES;
     }
     restart_at(m.seek_off[idx], skip * m.spf);
-    *actual_s = (uint32_t)(((uint64_t)(entry_frame + skip) * m.spf) / m.hz);
+    /* Rounded: the player counts the position on from here */
+    *actual_s = (uint32_t)(((uint64_t)(entry_frame + skip) * m.spf + m.hz / 2U) / m.hz);
     return true;
   }
 
