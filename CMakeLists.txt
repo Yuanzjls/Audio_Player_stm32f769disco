@@ -99,6 +99,9 @@ target_compile_options(cmsis_dsp PRIVATE -O2 -w)
 # ---------------------------------------------------------------------------
 file(GLOB HAL_SOURCES "Drivers/STM32F7xx_HAL_Driver/Src/*.c")
 list(FILTER HAL_SOURCES EXCLUDE REGEX "_template\.c$")
+# Patched copy with a shorter SD command timeout (see the header of the copy)
+list(FILTER HAL_SOURCES EXCLUDE REGEX "stm32f7xx_ll_sdmmc\.c$")
+list(APPEND HAL_SOURCES Drivers/HAL_Patches/stm32f7xx_ll_sdmmc.c)
 
 # Only the BSP parts the player needs. The BSP LCD and audio drivers are not used:
 # the display is driven by Board/Src/display.c and the codec by Board/Src/audio_out.c.
