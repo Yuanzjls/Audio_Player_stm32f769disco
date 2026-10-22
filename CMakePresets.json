@@ -9,10 +9,13 @@
       "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake"
     },
     { "name": "Debug",   "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
-    { "name": "Release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+    { "name": "Release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
+    { "name": "Doom",    "inherits": "base", "displayName": "Release with the Doom app (GPL-2.0 code)",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "WITH_DOOM": "ON" } }
   ],
   "buildPresets": [
     { "name": "Debug",   "configurePreset": "Debug" },
-    { "name": "Release", "configurePreset": "Release" }
+    { "name": "Release", "configurePreset": "Release" },
+    { "name": "Doom",    "configurePreset": "Doom" }
   ]
 }

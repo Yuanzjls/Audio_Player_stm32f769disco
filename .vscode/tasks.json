@@ -1,7 +1,7 @@
 {
   // Quick access:
   //   Status bar buttons (needs the "Tasks" extension, actboy168.tasks):
-  //     Build | Flash | Monitor | Flash+Monitor | Reset
+  //     Build | Flash | Monitor | Flash+Monitor | Reset | Doom (build + flash with the Doom app)
   //   Ctrl+Shift+B -> Build (Debug)
   //   Ctrl+Shift+P > "Tasks: Run Task" for everything else
   // "options.statusbar" is read by the Tasks extension and ignored by VS Code itself.
@@ -83,6 +83,36 @@
       "args": ["--build", "--preset", "Release", "--target", "flash"],
       "dependsOn": "Configure (Release)",
       "options": { "statusbar": { "hide": true } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Configure (Doom)",
+      "detail": "Release with the Doom app (GPL-2.0 code, see Doom/README.md)",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--preset", "Doom"],
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build (Doom)",
+      "detail": "Release with the Doom app -> build/Doom",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Doom"],
+      "dependsOn": "Configure (Doom)",
+      "group": "build",
+      "options": { "statusbar": { "hide": true } },
+      "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
+    },
+    {
+      "label": "Flash (Doom)",
+      "detail": "Build the firmware with the Doom app, then program via ST-LINK",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "Doom", "--target", "flash"],
+      "dependsOn": "Configure (Doom)",
+      "options": { "statusbar": { "label": "$(game) Doom", "tooltip": "Build + flash the firmware with the Doom app" } },
       "problemMatcher": { "base": "$gcc", "fileLocation": "absolute" }
     },
     {

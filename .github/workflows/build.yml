@@ -49,6 +49,31 @@ jobs:
             build/${{ matrix.preset }}/Audio_Player_stm32f769disco.elf
           if-no-files-found: error
 
+  # The firmware with the optional Doom app (-DWITH_DOOM=ON, GPL-2.0 code):
+  # built so that it keeps compiling, not uploaded (the published firmware
+  # contains no GPL code)
+  doom:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install the Arm GNU Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '14.2.Rel1'
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset Release -DWITH_DOOM=ON
+
+      - name: Build
+        run: cmake --build build/Release
+
   # Host unit tests (tests/): ID3, WAV, MP3, spectrum, with AddressSanitizer
   # and UndefinedBehaviorSanitizer, so memory errors fail the run too
   tests:
