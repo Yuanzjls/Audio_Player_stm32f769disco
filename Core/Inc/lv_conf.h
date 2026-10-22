@@ -67,7 +67,11 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
 /** Size of the pool `lv_malloc()` allocates from. Needs to be at least 2kB (2048). */
+#ifdef WITH_DOOM
+#define LV_MEM_SIZE (3U * 1024U * 1024U)   /* 1 MB less: Doom keeps its memory (Doom/port) */
+#else
 #define LV_MEM_SIZE (4U * 1024U * 1024U)   /* placed in SDRAM via LV_ATTRIBUTE_LARGE_RAM_ARRAY */
+#endif
 
 /** Place the pool at a fixed address instead of allocating it as a normal array.
  *  0: unused.

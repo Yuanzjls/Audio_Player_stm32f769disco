@@ -33,10 +33,16 @@
 #define CPU_PERIOD_TICKS   4          /* CPU load over 4 x 250 ms */
 #define SWITCH_ANIM_MS     150
 
+#ifdef WITH_DOOM                      /* six tiles */
+#define TILE_SIZE          120
+#define TILE_GAP           10
+#define TILE_ICON          72
+#else
 #define TILE_SIZE          136
 #define TILE_GAP           20
-#define TILE_Y             120
 #define TILE_ICON          80
+#endif
+#define TILE_Y             120
 #define BAR_HEIGHT         88
 #define BAR_MARGIN         32
 #define BAR_COVER          64
@@ -45,7 +51,13 @@
 #define TITLE_FONT_SIZE    32
 #define TEXT_FONT_SIZE     22
 
-static const app_t *const k_apps[] = { &app_music, &app_video, &app_files, &app_sysinfo, &app_settings };
+static const app_t *const k_apps[] = {
+  &app_music, &app_video, &app_files,
+#ifdef WITH_DOOM
+  &app_doom,
+#endif
+  &app_sysinfo, &app_settings,
+};
 #define APP_COUNT (sizeof(k_apps) / sizeof(k_apps[0]))
 
 static const char *const k_font_paths[] = { "S:/font.ttf", "S:/font.otf", "S:/font.ttc" };

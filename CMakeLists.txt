@@ -38,6 +38,13 @@ endforeach()
 
 set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32F769NIHx_FLASH.ld")
 
+# Doom (Chocolate Doom, GPL-2.0): off by default, so that the default firmware
+# contains no GPL code. -DWITH_DOOM=ON adds the Doom app (see Doom/README.md).
+option(WITH_DOOM "Add the Doom app (GPL-2.0 Chocolate Doom, see Doom/README.md)" OFF)
+if(WITH_DOOM)
+  message(STATUS "Doom app: on (the firmware includes GPL-2.0 code)")
+endif()
+
 # ---------------------------------------------------------------------------
 # Settings shared by the application and LVGL
 # (STM32F769NI = Cortex-M7 with double-precision FPU)
@@ -50,6 +57,7 @@ target_compile_definitions(board_config INTERFACE
   USE_STM32F769I_DISCO
   LV_CONF_INCLUDE_SIMPLE
   $<$<CONFIG:Debug>:DEBUG>
+  $<$<BOOL:${WITH_DOOM}>:WITH_DOOM>
 )
 
 target_include_directories(board_config INTERFACE
@@ -106,6 +114,27 @@ target_include_directories(cmsis_dsp
 )
 target_link_libraries(cmsis_dsp PRIVATE board_config)
 target_compile_options(cmsis_dsp PRIVATE -O2 -w)
+
+# ---------------------------------------------------------------------------
+# Doom (-DWITH_DOOM=ON): the Chocolate Doom engine (Doom/chocdoom, as in
+# github.com/Yuanzjls/Doom_STM32F769-DISCO) and its port to this board
+# (Doom/port). Every file sees the port's C library first (doom_libc.h).
+# Optimised in Debug builds too: it is a game.
+# ---------------------------------------------------------------------------
+if(WITH_DOOM)
+  file(GLOB DOOM_ENGINE_SOURCES CONFIGURE_DEPENDS "Doom/chocdoom/*.c" "Doom/chocdoom/doom/*.c")
+  file(GLOB DOOM_PORT_SOURCES CONFIGURE_DEPENDS "Doom/port/*.c")
+  add_library(doom STATIC ${DOOM_ENGINE_SOURCES} ${DOOM_PORT_SOURCES})
+  target_include_directories(doom
+    PUBLIC  Doom/port
+    PRIVATE Doom/chocdoom Doom/chocdoom/doom Board/Inc App/Inc
+  )
+  target_link_libraries(doom PRIVATE board_config)
+  target_compile_options(doom PRIVATE -O2 -include ${CMAKE_CURRENT_SOURCE_DIR}/Doom/port/doom_libc.h)
+  # Third-party engine: no warnings; the port: ours
+  set_source_files_properties(${DOOM_ENGINE_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  set_source_files_properties(${DOOM_PORT_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter")
+endif()
 
 # ---------------------------------------------------------------------------
 # Firmware
@@ -200,6 +229,9 @@ target_link_options(${PROJECT_NAME} PRIVATE
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_DEPENDS "${LINKER_SCRIPT}")
 
 target_link_libraries(${PROJECT_NAME} PRIVATE board_config lvgl cmsis_dsp m)
+if(WITH_DOOM)
+  target_link_libraries(${PROJECT_NAME} PRIVATE doom)
+endif()
 
 # ---------------------------------------------------------------------------
 # Post-build: .hex / .bin and size report

@@ -95,6 +95,29 @@ SECTIONS
   } >RAM
   ASSERT(ADDR(.dma_buffer) + SIZEOF(.dma_buffer) <= 0x20020000, "DMA buffers must fit in DTCM")
 
+  /* The Doom engine's variables (libdoom.a, built with -DWITH_DOOM=ON): about
+     300 KB, too much for the internal RAM. SDRAM works only after
+     BSP_SDRAM_Init(), so main() copies .doom_data from flash and zeroes
+     .doom_bss right after it (doom_memory_init). Empty without Doom. */
+  .doom_data :
+  {
+    . = ALIGN(8);
+    __doom_data_start = .;
+    *libdoom.a:*(.data .data.*)
+    . = ALIGN(8);
+    __doom_data_end = .;
+  } >SDRAM AT> FLASH
+  __doom_data_load = LOADADDR(.doom_data);
+
+  .doom_bss (NOLOAD) :
+  {
+    . = ALIGN(8);
+    __doom_bss_start = .;
+    *libdoom.a:*(.bss .bss.* COMMON)
+    . = ALIGN(8);
+    __doom_bss_end = .;
+  } >SDRAM
+
   /* used by the startup to initialize data */
   _sidata = LOADADDR(.data);
 

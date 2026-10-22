@@ -19,7 +19,7 @@ void log_init(void);
 void log_write(const char *data, size_t len);
 
 /** printf-style logging; a newline is appended. Usable from tasks only (not ISRs). */
-void log_printf(const char *level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+void log_printf(const char *level, const char *fmt, ...) __attribute__((format(__printf__, 2, 3)));
 
 #define LOG_INFO(...)  log_printf("I", __VA_ARGS__)
 #define LOG_WARN(...)  log_printf("W", __VA_ARGS__)

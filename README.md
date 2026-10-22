@@ -38,6 +38,9 @@ user interface on FreeRTOS.
 * **Settings** (volume, screen brightness, shuffle at start, screen off after a while), saved
   on the SD card.
 * **Robust SD-card access**: failed reads are retried, after re-initialising the card if needed.
+* **Doom (optional)**: Chocolate Doom as an app, with touch controls and sound effects, in a
+  firmware built with `-DWITH_DOOM=ON` (GPL-2.0 code, not in the default firmware; see
+  [Doom/README.md](Doom/README.md)).
 
 ## Quick start (prebuilt firmware)
 
@@ -104,6 +107,9 @@ cmake --preset Debug          # or Release
 cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.hex/.bin
 ```
 
+With the Doom app (GPL-2.0 code, see [Doom/README.md](Doom/README.md)): add `-DWITH_DOOM=ON`
+when configuring, e.g. `cmake --preset Release -DWITH_DOOM=ON`.
+
 ## Flash
 
 * `cmake --build build/Debug --target flash` – STM32CubeProgrammer CLI if installed, otherwise OpenOCD.
@@ -142,13 +148,14 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `picture` (picture viewer decoding task, JPEG), `image_decode` (PNG, BMP), `image_scale` (shrinking while decoding), `inflate` (streaming DEFLATE), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `picture` (picture viewer decoding task, JPEG), `image_decode` (PNG, BMP), `image_scale` (shrinking while decoding), `inflate` (streaming DEFLATE), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings`, `app_doom` (with `-DWITH_DOOM=ON`) |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
 | `Drivers/` | ST HAL, CMSIS, board support package and chip drivers (submodules, CMSIS Core copied); `HAL_Patches/`: a HAL file built in place of ST's (shorter SD command timeout, see its header) |
 | `tests/` | Host unit tests (see [Tests](#tests)) |
 | `FATFS/` | FatFs, with the SD-card glue in `diskio.c` and the settings in `ffconf.h` |
+| `Doom/` | Optional Doom app (`-DWITH_DOOM=ON`, GPL-2.0): the Chocolate Doom engine and its port to this board (see [Doom/README.md](Doom/README.md)) |
 
 Tasks: `player` (priority 3) streams audio; `gui` (priority 1) runs LVGL. The UI only talks to the
 player through `player_*()` commands and reads a status snapshot, so the two never share state directly.
@@ -204,6 +211,7 @@ Codec volume changes (a few I2C writes) and the UART log stay blocking: they are
 | 32F769I-Discovery BSP | v2.2.1 | submodule `Drivers/BSP/STM32F769I-Discovery` |
 | BSP components | common v4.0.1, wm8994 v2.2.1, otm8009a v1.0.7, nt35510 v1.0.3, ft6x06 v1.0.2, adv7533 v1.0.2 | submodules `Drivers/BSP/Components/*` |
 | FatFs | R0.16 | copied into `FATFS/` |
+| Chocolate Doom (optional) | as in Yuanzjls/Doom_STM32F769-DISCO (b1d65c8) | copied into `Doom/chocdoom` (GPL-2.0, only with `-DWITH_DOOM=ON`) |
 
 The ST driver versions are the set pinned by STM32CubeF7 v1.17.4. Newer major releases of
 the chip drivers (wm8994 v3, otm8009a v2, ...) use a different API and do not fit this BSP.

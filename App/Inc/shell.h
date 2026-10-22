@@ -34,6 +34,9 @@ extern const app_t app_video;
 extern const app_t app_sysinfo;
 extern const app_t app_settings;
 extern const app_t app_files;
+#ifdef WITH_DOOM
+extern const app_t app_doom;       /* app_doom.c, built with -DWITH_DOOM=ON */
+#endif
 
 /** Build the home screen and the apps, and show the home screen. */
 void shell_init(void);

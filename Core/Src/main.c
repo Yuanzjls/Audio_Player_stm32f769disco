@@ -28,6 +28,9 @@
 #include "stm32f769i_discovery_sdram.h"
 #include "touch.h"
 #include "shell.h"
+#ifdef WITH_DOOM
+#include "doom_port.h"
+#endif
 
 #define INITIAL_VOLUME      20      /* 0..100 */
 
@@ -66,6 +69,9 @@ int main(void)
     LOG_ERROR("SDRAM init failed");
     Error_Handler();
   }
+#ifdef WITH_DOOM
+  doom_memory_init();   /* the Doom engine's variables are in SDRAM */
+#endif
 
   i2c_bus_init();
   player_start(INITIAL_VOLUME);
