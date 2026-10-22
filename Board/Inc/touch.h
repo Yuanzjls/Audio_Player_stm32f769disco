@@ -37,6 +37,17 @@ void touch_process(void);
 /** To be called from EXTI15_10_IRQHandler */
 void touch_irq_handler(void);
 
+/** The touches of the last read: up to two fingers, in screen coordinates */
+typedef struct
+{
+  uint8_t  count;
+  uint16_t x[2], y[2];
+} touch_points_t;
+
+/** Copy the touches of the last read (any task; for code that needs both
+ *  fingers, which LVGL's single pointer does not give). */
+void touch_get_points(touch_points_t *points);
+
 #ifdef __cplusplus
 }
 #endif

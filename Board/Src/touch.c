@@ -22,6 +22,7 @@ static TaskHandle_t     s_gui_task;
 static volatile bool    s_data_pending;
 static bool             s_pressed;
 static bool             s_waking;      /* the touch that woke the screen is not passed on */
+static touch_points_t   s_points;      /* both fingers at the last read */
 
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
@@ -43,6 +44,20 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     last_y = ts.touchY[0];
   }
   s_pressed = pressed;
+
+  touch_points_t points = { 0, { 0, 0 }, { 0, 0 } };
+  if (pressed && !s_waking && display_is_on())   /* not the touch that wakes the screen */
+  {
+    points.count = (ts.touchDetected > 2U) ? 2U : ts.touchDetected;
+    for (uint32_t i = 0; i < points.count; i++)
+    {
+      points.x[i] = ts.touchX[i];
+      points.y[i] = ts.touchY[i];
+    }
+  }
+  taskENTER_CRITICAL();
+  s_points = points;
+  taskEXIT_CRITICAL();
 
   /* LVGL expects the last known position also while released */
   data->point.x = last_x;
@@ -102,6 +117,13 @@ void touch_process(void)
   {
     lv_indev_read(s_indev);
   }
+}
+
+void touch_get_points(touch_points_t *points)
+{
+  taskENTER_CRITICAL();
+  *points = s_points;
+  taskEXIT_CRITICAL();
 }
 
 void touch_irq_handler(void)
