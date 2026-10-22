@@ -795,49 +795,53 @@ static void send_command(command_type_t type, uint32_t value)
 
 /* ---- task ------------------------------------------------------------------ */
 
-static void mount_card_and_scan(void)
+/* Wait for a card and mount it (retrying every CARD_RETRY_MS). */
+static void mount_card(void)
 {
   bool warned = false;
 
-  for (;;)
+  while (f_mount(&s_fs, "", 1) != FR_OK)
   {
-    if (f_mount(&s_fs, "", 1) == FR_OK)
+    set_state(PLAYER_STATE_NO_CARD, "Insert an SD card");
+    if (!warned)
     {
-      const uint16_t count = scan_library();
-      static const char *const k_fs_names[] = { "?", "FAT12", "FAT16", "FAT32", "exFAT" };
-      status_lock();
-      s_status.card_mb = (uint32_t)(((uint64_t)(s_fs.n_fatent - 2U) * s_fs.csize) / 2048U);
-      snprintf(s_status.card_fs, sizeof(s_status.card_fs), "%s",
-               k_fs_names[(s_fs.fs_type <= FS_EXFAT) ? s_fs.fs_type : 0]);
-      s_status.track_count = count;
-      s_status.library_serial++;
-      status_unlock();
-
-      if (count > 0U)
-      {
-        LOG_INFO("player: %u track(s) in %s", (unsigned)count, PLAYER_MUSIC_DIR);
-        /* Card and library are ready (the UI can load fonts and the list) */
-        set_state(PLAYER_STATE_STOPPED, NULL);
-        return;
-      }
-      set_state(PLAYER_STATE_NO_TRACKS, "No .wav or .mp3 files in /Music");
-      if (!warned)
-      {
-        LOG_WARN("player: no .wav or .mp3 files in %s", PLAYER_MUSIC_DIR);
-      }
+      LOG_WARN("player: SD card not mounted, retrying");
+      warned = true;
     }
-    else
-    {
-      set_state(PLAYER_STATE_NO_CARD, "Insert an SD card");
-      if (!warned)
-      {
-        LOG_WARN("player: SD card not mounted, retrying");
-      }
-    }
-    warned = true;
     f_unmount("");
     vTaskDelay(pdMS_TO_TICKS(CARD_RETRY_MS));
   }
+
+  static const char *const k_fs_names[] = { "?", "FAT12", "FAT16", "FAT32", "exFAT" };
+  status_lock();
+  s_status.card_mb = (uint32_t)(((uint64_t)(s_fs.n_fatent - 2U) * s_fs.csize) / 2048U);
+  snprintf(s_status.card_fs, sizeof(s_status.card_fs), "%s",
+           k_fs_names[(s_fs.fs_type <= FS_EXFAT) ? s_fs.fs_type : 0]);
+  status_unlock();
+}
+
+/* Read the library of the mounted card. The card stays mounted without songs
+ * too: the other apps (files, video, pictures, Doom), the settings and the
+ * fonts use it. */
+static uint16_t load_library(void)
+{
+  const uint16_t count = scan_library();
+  status_lock();
+  s_status.track_count = count;
+  s_status.library_serial++;
+  status_unlock();
+
+  if (count > 0U)
+  {
+    LOG_INFO("player: %u track(s) in %s", (unsigned)count, PLAYER_MUSIC_DIR);
+    set_state(PLAYER_STATE_STOPPED, NULL);
+  }
+  else
+  {
+    LOG_WARN("player: no .wav or .mp3 files in %s", PLAYER_MUSIC_DIR);
+    set_state(PLAYER_STATE_NO_TRACKS, "No .wav or .mp3 files in /Music");
+  }
+  return count;
 }
 
 /* Block until the GUI has drawn its first frame (or the timeout expires).
@@ -868,10 +872,12 @@ static void player_task(void *arg)
 {
   (void)arg;
 
-  mount_card_and_scan();
+  mount_card();
 
-  /* The saved settings decide the volume and whether to start in shuffle mode */
+  /* The saved settings decide the volume and whether to start in shuffle mode
+   * (loaded with the card, songs or not) */
   settings_load();
+  const uint16_t count = load_library();
   const settings_t settings = settings_get();
   status_lock();
   s_status.volume  = settings.volume;
@@ -881,8 +887,8 @@ static void player_task(void *arg)
   wait_for_ui();
 
   /* Shuffle (the default) also picks the first song at random */
-  const uint16_t first = shuffle_enabled() ? (uint16_t)random_below(track_count()) : 0U;
-  if (open_playable_track(first, track_count()))
+  const uint16_t first = (shuffle_enabled() && count > 0U) ? (uint16_t)random_below(count) : 0U;
+  if (count > 0U && open_playable_track(first, count))
   {
     if (shuffle_enabled())
     {
@@ -890,7 +896,7 @@ static void player_task(void *arg)
     }
     start_output();
   }
-  else
+  else if (count > 0U)
   {
     set_state(PLAYER_STATE_NO_TRACKS, "No playable music files in /Music");
   }
