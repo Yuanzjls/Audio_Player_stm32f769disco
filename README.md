@@ -119,7 +119,8 @@ cmake --build build/Debug     # -> build/Debug/Audio_Player_stm32f769disco.elf/.
 ## Tests
 
 The board-independent parts (ID3 tags and cover location, WAV and MP3 decoding, the spectrum
-analysis, the settings file, the AVI parser and the YCbCr to RGB conversion) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
+analysis, the settings file, the AVI parser, the YCbCr to RGB conversion, and PNG / BMP decoding with
+shrinking and turning) have unit tests that run on the PC, against fakes for the SD card, the log and the audio
 output (`tests/support/fakes.c`). The MP3 tests decode real files from `tests/fixtures`
 (regenerate them with `make_fixtures.sh`). They need a host C compiler (e.g. gcc; on Windows
 `winget install BrechtSanders.WinLibs.POSIX.UCRT`):
@@ -136,7 +137,7 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `image_decode` (PNG, BMP), `image_scale` (shrinking while decoding), `inflate` (streaming DEFLATE), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |

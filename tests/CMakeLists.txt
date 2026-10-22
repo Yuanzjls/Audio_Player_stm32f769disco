@@ -1,5 +1,5 @@
 # Host unit tests: the board-independent parts of the firmware (ID3 tags, WAV
-# and MP3 decoding, spectrum analysis) built for the PC, with fakes for the
+# and MP3 decoding, spectrum analysis, PNG / BMP pictures) built for the PC, with fakes for the
 # SD card, the log and the audio output (support/fakes.c).
 #
 #   cmake -S tests -B build/tests -G Ninja
@@ -63,6 +63,9 @@ add_library(app_under_test STATIC
   ${ROOT}/App/Src/settings.c
   ${ROOT}/App/Src/avi.c
   ${ROOT}/App/Src/yuv2rgb.c
+  ${ROOT}/App/Src/inflate.c
+  ${ROOT}/App/Src/image_scale.c
+  ${ROOT}/App/Src/image_decode.c
   support/fakes.c
   support/check.c
 )
@@ -86,7 +89,7 @@ if(SANITIZE)
 endif()
 
 enable_testing()
-foreach(name id3 wav mp3 spectrum settings avi yuv2rgb)
+foreach(name id3 wav mp3 spectrum settings avi yuv2rgb image)
   add_executable(test_${name} test_${name}.c)
   target_link_libraries(test_${name} PRIVATE app_under_test)
   target_compile_options(test_${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)

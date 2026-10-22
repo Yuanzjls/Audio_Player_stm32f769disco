@@ -32,3 +32,26 @@ ffmpeg $Q -f lavfi -i "testsrc=size=96x64:rate=10:duration=2" -f lavfi -i "sine=
 ffmpeg $Q -f lavfi -i "testsrc=size=96x64:rate=12:duration=2" -f lavfi -i "sine=frequency=440:sample_rate=22050:duration=2" \
   -map 0:v -map 1:a -c:v mjpeg -q:v 8 -pix_fmt yuvj420p -c:a libmp3lame -b:a 32k -ac 1 mjpeg_mp3_96x64.avi
 ffmpeg $Q -f lavfi -i "testsrc=size=96x64:rate=10:duration=1" -c:v mjpeg -q:v 8 -pix_fmt yuvj420p mjpeg_silent_96x64.avi
+
+# Pictures (32x24 test pattern) in every PNG colour type and the BMP pixel
+# formats, each with its pixels as decoded by FFmpeg (raw RGBA) to compare with.
+# PNG rows use all five filters (-pred mixed).
+mkdir -p images
+ffmpeg $Q -f lavfi -i "testsrc=size=32x24" -frames:v 1 -vf format=rgb24 images/src.png
+for fmt in rgb24 rgba gray ya8 gray16be rgb48be rgba64be pal8 monob; do
+  case $fmt in
+    rgba|ya8|rgba64be) vf="format=rgba,colorchannelmixer=aa=0.5,format=$fmt" ;;
+    *) vf="format=$fmt" ;;
+  esac
+  ffmpeg $Q -i images/src.png -vf "$vf" -pred mixed images/png_$fmt.png
+  ffmpeg $Q -i images/png_$fmt.png -f rawvideo -pix_fmt rgba images/png_$fmt.rgba
+done
+for fmt in bgr24 bgra rgb565le rgb555le pal8 monob; do
+  ffmpeg $Q -i images/src.png -vf format=$fmt images/bmp_$fmt.bmp
+  ffmpeg $Q -i images/bmp_$fmt.bmp -f rawvideo -pix_fmt rgba images/bmp_$fmt.rgba
+done
+rm images/src.png
+
+# A larger PNG whose pixels the test computes (more than the 32 KB inflate window)
+ffmpeg $Q -f lavfi -i "color=c=black:s=256x192" -frames:v 1 \
+  -vf "format=rgb24,geq=r='mod(X*7+Y*3\,256)':g='mod(X*X+Y\,256)':b='mod(X*Y\,256)'" -pred mixed images/png_pattern.png
