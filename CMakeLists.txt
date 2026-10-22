@@ -124,6 +124,8 @@ target_compile_options(cmsis_dsp PRIVATE -O2 -w)
 if(WITH_DOOM)
   file(GLOB DOOM_ENGINE_SOURCES CONFIGURE_DEPENDS "Doom/chocdoom/*.c" "Doom/chocdoom/doom/*.c")
   file(GLOB DOOM_PORT_SOURCES CONFIGURE_DEPENDS "Doom/port/*.c")
+  # The OPL music player (Chocolate Doom 2.2.1): not built yet
+  list(FILTER DOOM_ENGINE_SOURCES EXCLUDE REGEX "/(i_oplmusic|midifile|mus2mid)\.c$")
   add_library(doom STATIC ${DOOM_ENGINE_SOURCES} ${DOOM_PORT_SOURCES})
   target_include_directories(doom
     PUBLIC  Doom/port
