@@ -54,6 +54,7 @@
 #define CARD_RETRY_MS      1000
 #define CARD_DEBOUNCE_MS   300        /* the card-detect switch must settle */
 #define OPEN_SEARCH_MS     5000       /* longest search for a playable track */
+#define LIBRARY_DEPTH      4          /* folders inside the music folder searched for songs */
 
 typedef enum
 {
@@ -166,50 +167,113 @@ static size_t base_name_len(const char *name)
   return (dot != NULL) ? (size_t)(dot - name) : strlen(name);
 }
 
-static int compare_names(const void *a, const void *b)
+/* The file name in a library entry (a path relative to the music folder) */
+static const char *file_name_of(const char *entry)
 {
-  return strcasecmp(NAME_AT(*(const uint16_t *)a), NAME_AT(*(const uint16_t *)b));
+  const char *slash = strrchr(entry, '/');
+  return (slash != NULL) ? slash + 1 : entry;
 }
 
-/* Read the music folder into the name pool (sorted, case-insensitive). Returns the count. */
-static uint16_t scan_library(void)
+/* By file name, then by folder (songs of the same name in two folders) */
+static int compare_names(const void *a, const void *b)
 {
+  const char *ea = NAME_AT(*(const uint16_t *)a);
+  const char *eb = NAME_AT(*(const uint16_t *)b);
+  const int c = strcasecmp(file_name_of(ea), file_name_of(eb));
+  return (c != 0) ? c : strcasecmp(ea, eb);
+}
+
+typedef struct
+{
+  uint16_t count;
+  uint32_t used;          /* bytes of the name pool */
+  bool     full;
+  char     rel[PLAYER_PATH_MAX - sizeof(PLAYER_MUSIC_DIR)];   /* folder being read, relative */
+} scan_t;
+
+/* Add the songs of folder s->rel (rel_len characters; "" is the music folder)
+ * and, down to LIBRARY_DEPTH, of the folders in it */
+static void scan_folder(scan_t *s, size_t rel_len, unsigned int depth)
+{
+  char path[PLAYER_PATH_MAX];
   DIR dir;
   FILINFO info;
-  uint16_t count = 0;
-  uint32_t used = 0;     /* bytes of the name pool */
 
-  if (f_opendir(&dir, PLAYER_MUSIC_DIR) != FR_OK)
+  snprintf(path, sizeof(path), "%s%s%s", PLAYER_MUSIC_DIR, (rel_len != 0U) ? "/" : "", s->rel);
+  if (f_opendir(&dir, path) != FR_OK)
   {
-    return 0;
+    return;
   }
-  while (f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0')
+  while (!s->full && f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0')
   {
-    if ((info.fattrib & (AM_DIR | AM_HID | AM_SYS)) != 0U || !decoder_is_supported(info.fname))
+    if ((info.fattrib & (AM_HID | AM_SYS)) != 0U || info.fname[0] == '.')
     {
       continue;
     }
-    if (count == PLAYER_MAX_TRACKS)
+    const size_t n = strlen(info.fname);
+    const size_t entry_len = (rel_len != 0U) ? rel_len + 1U + n : n;
+    if (entry_len >= sizeof(s->rel))
+    {
+      continue;            /* path too long */
+    }
+    if ((info.fattrib & AM_DIR) != 0U)
+    {
+      if (depth < LIBRARY_DEPTH)
+      {
+        snprintf(&s->rel[rel_len], sizeof(s->rel) - rel_len, "%s%s", (rel_len != 0U) ? "/" : "", info.fname);
+        scan_folder(s, entry_len, depth + 1U);
+        s->rel[rel_len] = '\0';
+      }
+      continue;
+    }
+    if (!decoder_is_supported(info.fname))
+    {
+      continue;
+    }
+    if (s->count == PLAYER_MAX_TRACKS)
     {
       LOG_WARN("player: more than %u tracks, the rest is ignored", (unsigned)PLAYER_MAX_TRACKS);
+      s->full = true;
       break;
     }
-    const size_t len = strlen(info.fname) + 1U;
-    if (used + len > PLAYER_NAMES_POOL)
+    if (s->used + entry_len + 1U > PLAYER_NAMES_POOL)
     {
-      LOG_WARN("player: the names of more than %u tracks do not fit, the rest is ignored", (unsigned)count);
+      LOG_WARN("player: the names of more than %u tracks do not fit, the rest is ignored", (unsigned)s->count);
+      s->full = true;
       break;
     }
-    memcpy(&s_name_pool[used], info.fname, len);
-    s_name_at[count] = used;
-    used += (uint32_t)len;
-    s_sorted[count] = count;
-    count++;
+    char *entry = &s_name_pool[s->used];      /* "folder/name" or "name" */
+    if (rel_len != 0U)
+    {
+      memcpy(entry, s->rel, rel_len);
+      entry[rel_len] = '/';
+      memcpy(&entry[rel_len + 1U], info.fname, n + 1U);
+    }
+    else
+    {
+      memcpy(entry, info.fname, n + 1U);
+    }
+    s_name_at[s->count] = s->used;
+    s_sorted[s->count]  = s->count;
+    s->used += (uint32_t)entry_len + 1U;
+    s->count++;
   }
   f_closedir(&dir);
+}
 
-  qsort(s_sorted, count, sizeof(s_sorted[0]), compare_names);
-  return count;
+/* Read the songs of the music folder and its folders into the name pool
+ * (sorted by file name, case-insensitive). Returns the count. */
+static uint16_t scan_library(void)
+{
+  static scan_t s;    /* not on the stack: the folders' paths */
+  s.count = 0;
+  s.used  = 0;
+  s.full  = false;
+  s.rel[0] = '\0';
+  scan_folder(&s, 0, 0);
+
+  qsort(s_sorted, s.count, sizeof(s_sorted[0]), compare_names);
+  return s.count;
 }
 
 static void close_track(void)
@@ -279,15 +343,15 @@ static bool open_path(const char *path, const char *file_name, uint16_t index, b
 /* Open and validate library track @p index */
 static bool open_track(uint16_t index)
 {
-  char path[sizeof(PLAYER_MUSIC_DIR) + 1 + PLAYER_TITLE_MAX];
+  char path[PLAYER_PATH_MAX];
 
   close_track();
   if (index >= track_count())
   {
     return false;
   }
-  snprintf(path, sizeof(path), "%s/%.*s", PLAYER_MUSIC_DIR, PLAYER_TITLE_MAX - 1, NAME(index));   /* names are shorter */
-  return open_path(path, NAME(index), index, false);
+  snprintf(path, sizeof(path), "%s/%.*s", PLAYER_MUSIC_DIR, (int)(sizeof(path) - sizeof(PLAYER_MUSIC_DIR) - 1U), NAME(index));
+  return open_path(path, file_name_of(NAME(index)), index, false);
 }
 
 static bool card_detected(void)
@@ -1093,7 +1157,8 @@ bool player_get_track_name(uint16_t index, char *name, size_t len)
   if (index < s_status.track_count && len > 0U)
   {
     /* File name without its extension */
-    snprintf(name, len, "%.*s", (int)base_name_len(NAME(index)), NAME(index));
+    const char *file = file_name_of(NAME(index));
+    snprintf(name, len, "%.*s", (int)base_name_len(file), file);
     ok = true;
   }
   status_unlock();

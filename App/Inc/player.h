@@ -1,8 +1,10 @@
 /**
  * @file  player.h
- * @brief WAV playlist player running in its own task.
+ * @brief Music player (WAV, MP3) running in its own task.
  *
- * Plays the .wav and .mp3 files of /Music on the SD card, sorted by name.
+ * Plays the .wav and .mp3 files of /Music on the SD card and of the folders
+ * in it (four levels deep), sorted by file name. The card may be taken out
+ * and put back while the player runs.
  * Control functions are thread safe: they queue a command for the player
  * task and return immediately. The UI polls player_get_status().
  */

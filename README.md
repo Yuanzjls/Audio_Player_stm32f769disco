@@ -30,7 +30,7 @@ user interface on FreeRTOS.
 * **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,
   with a blurred copy of it behind the player.
 * **Spectrum analyser**: 32 bands, computed live from what is playing (CMSIS-DSP FFT).
-* **Library of up to 4096 songs**, in name order, in a panel that folds away.
+* **Library of up to 4096 songs** from /Music and its folders, in name order, in a panel that folds away.
 * **Shuffle** (on by default, starting at a random song), repeat-one, previous/next, seek, volume.
 * **Song titles in any language** (e.g. Chinese), with a TrueType font from the SD card.
 * **Low CPU load**: interrupt / DMA driven throughout; about 12 % of the CPU while an MP3 plays
@@ -79,14 +79,17 @@ revisions ship an NT35510 panel, which the display driver does not support yet.
 ## SD card
 
 ```
-/Music/*.wav      songs (.wav, .mp3), listed and played in name order
-/Music/*.mp3
+/Music/*.mp3      songs (.mp3, .wav), listed and played in name order; the folders in
+/Music/*/*.wav    /Music are searched too, four levels deep (e.g. /Music/Artist/Album/)
 /Avi/*.avi        videos for the Video app
 /font.ttf         optional: font for the song titles (font.otf / font.ttc also work, for a
                   .ttc collection the first face is used), e.g. Noto Sans SC for Chinese.
                   Without it only Latin titles render.
 /settings.txt     written by the Settings app (key=value lines, can be edited by hand)
 ```
+
+The card can be taken out and put back while the player runs: it notices, and reads the
+library again.
 
 Only distribute fonts whose license allows it; e.g. Microsoft YaHei comes with Windows and is
 fine on your own board, but must not be committed to this repository.
