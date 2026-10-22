@@ -318,6 +318,29 @@ static void fill_half(uint32_t half)
   s_track.frames_out += got;
 }
 
+/* Log errors of the audio output (an SAI underrun garbles the sound until the
+ * output restarts), at most once a second, with the totals since it started */
+static void report_output_errors(void)
+{
+  static audio_out_errors_t logged;
+  static TickType_t         logged_at;
+  audio_out_errors_t now;
+
+  audio_out_errors(&now);
+  if (now.underruns < logged.underruns || now.dma_errors < logged.dma_errors)
+  {
+    logged.underruns = logged.dma_errors = 0;   /* the output was restarted */
+  }
+  if ((now.underruns != logged.underruns || now.dma_errors != logged.dma_errors) &&
+      (xTaskGetTickCount() - logged_at) >= pdMS_TO_TICKS(1000))
+  {
+    LOG_WARN("audio: %lu SAI underrun(s), %lu DMA error(s) since the output started",
+             (unsigned long)now.underruns, (unsigned long)now.dma_errors);
+    logged    = now;
+    logged_at = xTaskGetTickCount();
+  }
+}
+
 static void audio_callback(audio_out_event_t event)
 {
   BaseType_t woken = pdFALSE;
@@ -886,6 +909,10 @@ static void player_task(void *arg)
       if (events & NOTIFY_FULL_DONE)
       {
         fill_half(1);
+      }
+      if (events & (NOTIFY_HALF_DONE | NOTIFY_FULL_DONE))
+      {
+        report_output_errors();
       }
       /* The half holding the last samples has been played once two halves of silence were queued */
       if (s_track.silent_halves >= 2U)

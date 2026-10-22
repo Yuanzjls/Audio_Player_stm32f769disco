@@ -39,6 +39,11 @@ static const int16_t        *s_play_buf;
 static uint32_t              s_play_items;     /* int16 samples in the whole buffer */
 static volatile bool         s_running;        /* DMA running and not paused */
 
+/* Errors since the last start: underruns polled by audio_out_errors(), DMA
+ * errors counted by the DMA interrupt (through HAL_SAI_ErrorCallback) */
+static uint32_t              s_underruns;
+static volatile uint32_t     s_dma_errors;
+
 static const uint32_t k_supported_rates[] =
 {
   8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 96000,
@@ -190,8 +195,22 @@ bool audio_out_start(int16_t *buffer, uint32_t size_bytes)
 
   s_play_buf   = buffer;
   s_play_items = items;
+  s_underruns  = 0;
+  s_dma_errors = 0;
   s_running    = (HAL_SAI_Transmit_DMA(&s_sai, (uint8_t *)buffer, (uint16_t)items) == HAL_OK);
+  __HAL_SAI_CLEAR_FLAG(&s_sai, SAI_FLAG_OVRUDR);   /* the transfer starts with the FIFO filled */
   return s_running;
+}
+
+void audio_out_errors(audio_out_errors_t *errors)
+{
+  if (s_running && __HAL_SAI_GET_FLAG(&s_sai, SAI_FLAG_OVRUDR))
+  {
+    __HAL_SAI_CLEAR_FLAG(&s_sai, SAI_FLAG_OVRUDR);
+    s_underruns++;
+  }
+  errors->underruns  = s_underruns;
+  errors->dma_errors = s_dma_errors;
 }
 
 bool audio_out_pause(void)
@@ -307,10 +326,14 @@ void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai)
   }
 }
 
+/* Called by the DMA interrupt for DMA errors (the SAI interrupt, which would
+ * report underruns, is not enabled: audio_out_errors() polls them) */
 void HAL_SAI_ErrorCallback(SAI_HandleTypeDef *hsai)
 {
-  (void)hsai;
-  /* FIFO underruns are reported here; nothing to do, the DMA keeps running */
+  if (hsai == &s_sai)
+  {
+    s_dma_errors++;
+  }
 }
 
 void HAL_SAI_MspInit(SAI_HandleTypeDef *hsai)

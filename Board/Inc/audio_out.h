@@ -57,6 +57,20 @@ bool audio_out_peek(int16_t *out, uint32_t frames);
 /** Stereo frames of the buffer played since the DMA last wrapped around it. */
 uint32_t audio_out_position(void);
 
+/** Output errors since audio_out_start() */
+typedef struct
+{
+  uint32_t underruns;    /**< checks that found the SAI FIFO had run empty (at most one per check) */
+  uint32_t dma_errors;   /**< DMA transfer / FIFO errors */
+} audio_out_errors_t;
+
+/**
+ * Check the SAI for an underrun since the last call (it garbles the sound)
+ * and copy the error counts. A task calls it regularly while playing, e.g.
+ * after each refill: underruns are polled, the SAI interrupt is not used.
+ */
+void audio_out_errors(audio_out_errors_t *errors);
+
 /** To be called from DMA2_Stream6_IRQHandler */
 void audio_out_dma_irq_handler(void);
 
