@@ -38,7 +38,7 @@ user interface on FreeRTOS.
 * **Settings** (volume, screen brightness, shuffle at start, screen off after a while), saved
   on the SD card.
 * **Robust SD-card access**: failed reads are retried, after re-initialising the card if needed.
-* **Doom (optional)**: Chocolate Doom as an app, with touch controls and sound effects, in a
+* **Doom (optional)**: Chocolate Doom as an app, with touch controls, sound effects and OPL music, in a
   firmware built with `-DWITH_DOOM=ON` (GPL-2.0 code, not in the default firmware; see
   [Doom/README.md](Doom/README.md)).
 
@@ -211,7 +211,7 @@ Codec volume changes (a few I2C writes) and the UART log stay blocking: they are
 | 32F769I-Discovery BSP | v2.2.1 | submodule `Drivers/BSP/STM32F769I-Discovery` |
 | BSP components | common v4.0.1, wm8994 v2.2.1, otm8009a v1.0.7, nt35510 v1.0.3, ft6x06 v1.0.2, adv7533 v1.0.2 | submodules `Drivers/BSP/Components/*` |
 | FatFs | R0.16 | copied into `FATFS/` |
-| Chocolate Doom (optional) | as in Yuanzjls/Doom_STM32F769-DISCO (b1d65c8) | copied into `Doom/chocdoom` (GPL-2.0, only with `-DWITH_DOOM=ON`) |
+| Chocolate Doom (optional) | 2.1.0 as in Yuanzjls/Doom_STM32F769-DISCO (b1d65c8), music from 2.2.1, later fixes | copied into `Doom/chocdoom` (GPL-2.0, only with `-DWITH_DOOM=ON`) |
 
 The ST driver versions are the set pinned by STM32CubeF7 v1.17.4. Newer major releases of
 the chip drivers (wm8994 v3, otm8009a v2, ...) use a different API and do not fit this BSP.

@@ -11,7 +11,7 @@
 #include "log.h"
 #include "src/stdlib/builtin/lv_tlsf.h"
 
-#define HEAP_SIZE (320U * 1024U)       /* the engine's own allocations (lump directory: ~120 KB for DOOM2.WAD, grown by realloc) */
+#define HEAP_SIZE (512U * 1024U)       /* the engine's own allocations: lump directory (~120 KB for DOOM2.WAD), the current song's MIDI events (up to ~150 KB) */
 #define CONSOLE_LINE  160
 
 struct doom_file

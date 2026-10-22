@@ -13,15 +13,18 @@
 // GNU General Public License for more details.
 //
 // DESCRIPTION:
-//    Sound effects on the STM32F769 Discovery's headphone output. The
-//    effects (8-bit samples in the WAD) are mixed straight into the audio
-//    DMA buffer by its interrupt, at 11025 Hz like the originals, with
-//    volume and stereo separation per channel. No music: the engine plays
-//    it through MIDI or OPL synthesis, which this board does not have.
+//    Sound on the STM32F769 Discovery's headphone output, at 11025 Hz like
+//    the originals. A task of its own fills each half of the audio DMA
+//    buffer as soon as it has been played (the DMA interrupt only wakes
+//    it): the music, rendered by the OPL emulator from the game's MUS
+//    songs (opl_stm32.c, i_oplmusic.c), plus the sound effects (8-bit
+//    samples in the WAD), with volume and stereo separation per channel.
 //
 
 #include <string.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include "config.h"
 #include "deh_str.h"
@@ -37,16 +40,25 @@
 #define OUT_RATE     11025
 #define HALF_FRAMES  256              // 23 ms per DMA buffer half
 #define NUM_CHANNELS 16
+#define TASK_STACK_WORDS 1024
+#define TASK_PRIORITY    3            // the music player's: a half must be ready in 23 ms
+
+#define NOTIFY_HALF  (1UL << 0)
+#define NOTIFY_FULL  (1UL << 1)
+
+// The music, as the OPL music player uses it
+extern music_module_t music_opl_module;
+void OPL_STM32_Render(int32_t *out, unsigned int nsamples);
 
 int snd_sfxdevice = SNDDEVICE_SB;
-int snd_musicdevice = SNDDEVICE_NONE;
+int snd_musicdevice = SNDDEVICE_SB;   // OPL music (and the OPL version of the intro tune)
 int snd_samplerate = OUT_RATE;
 int snd_cachesize = 0;
 int snd_maxslicetime_ms = 28;
 char *snd_musiccmd = "";
 int snd_pitchshift = 0;
 
-// A playing effect. The interrupt reads it while active is set; the engine
+// A playing effect. The sound task reads it while active is set; the engine
 // changes it only while active is clear (or just the volumes, word by word).
 
 typedef struct
@@ -60,12 +72,15 @@ typedef struct
     int              lumpnum;       // cached while playing, -1: none
 } channel_t;
 
-static channel_t channels[NUM_CHANNELS];
-static int16_t   dma_buf[2 * HALF_FRAMES * 2] DMA_BUFFER;
-static boolean   sfx_prefix;
-static boolean   initialized;
+static channel_t    channels[NUM_CHANNELS];
+static int16_t      dma_buf[2 * HALF_FRAMES * 2] DMA_BUFFER;
+static int32_t      music_buf[HALF_FRAMES];   // mono, from the OPL emulator
+static boolean      sfx_prefix;
+static boolean      initialized;
+static boolean      music_ready;              // the OPL music player is set up
+static TaskHandle_t sound_task;
 
-// ---- mixing (DMA interrupt) -------------------------------------------------
+// ---- mixing (sound task) ----------------------------------------------------
 
 static inline int16_t Clamp16(int32_t v)
 {
@@ -85,9 +100,19 @@ static void Mix(int16_t *out)
         }
     }
 
+    // The music first (it also runs the music player's timed events)
+    if (music_ready)
+    {
+        OPL_STM32_Render(music_buf, HALF_FRAMES);
+    }
+    else
+    {
+        memset(music_buf, 0, sizeof(music_buf));
+    }
+
     for (int i = 0; i < HALF_FRAMES; i++)
     {
-        int32_t l = 0, r = 0;
+        int32_t l = music_buf[i], r = music_buf[i];
         for (int k = 0; k < n; k++)
         {
             channel_t *ch = playing[k];
@@ -112,9 +137,33 @@ static void Mix(int16_t *out)
     }
 }
 
+// DMA interrupt: a half was played; the task refills it
 static void AudioCallback(audio_out_event_t event)
 {
-    Mix(&dma_buf[(event == AUDIO_OUT_HALF_DONE) ? 0 : HALF_FRAMES * 2]);
+    if (sound_task != NULL)
+    {
+        BaseType_t woken = pdFALSE;
+        xTaskNotifyFromISR(sound_task, (event == AUDIO_OUT_HALF_DONE) ? NOTIFY_HALF : NOTIFY_FULL,
+                           eSetBits, &woken);
+        portYIELD_FROM_ISR(woken);
+    }
+}
+
+static void SoundTask(void *arg)
+{
+    for (;;)
+    {
+        uint32_t halves = 0;
+        xTaskNotifyWait(0, UINT32_MAX, &halves, portMAX_DELAY);
+        if (halves & NOTIFY_HALF)
+        {
+            Mix(&dma_buf[0]);
+        }
+        if (halves & NOTIFY_FULL)
+        {
+            Mix(&dma_buf[HALF_FRAMES * 2]);
+        }
+    }
 }
 
 // The app turns the output on when the game runs and off when it pauses
@@ -167,6 +216,12 @@ void I_InitSound(boolean use_sfx_prefix)
         channels[c].lumpnum = -1;
     }
     initialized = true;
+
+    if (sound_task == NULL &&
+        xTaskCreate(SoundTask, "dsound", TASK_STACK_WORDS, NULL, TASK_PRIORITY, &sound_task) != pdPASS)
+    {
+        fprintf(stderr, "I_InitSound: no memory for the sound task\n");
+    }
 }
 
 void I_ShutdownSound(void)
@@ -274,46 +329,81 @@ void I_BindSoundVariables(void)
 {
 }
 
-// ---- music: none ------------------------------------------------------------
+// ---- music: the OPL music player --------------------------------------------
 
 void I_InitMusic(void)
 {
+    // Needs the sound task (its timer detection waits for rendered audio)
+    music_ready = sound_task != NULL && music_opl_module.Init();
+    if (!music_ready)
+    {
+        fprintf(stderr, "I_InitMusic: no OPL music\n");
+    }
 }
 
 void I_ShutdownMusic(void)
 {
+    if (music_ready)
+    {
+        music_ready = false;
+        music_opl_module.Shutdown();
+    }
 }
 
 void I_SetMusicVolume(int volume)
 {
+    if (music_ready)
+    {
+        music_opl_module.SetMusicVolume(volume);
+    }
 }
 
 void I_PauseSong(void)
 {
+    if (music_ready)
+    {
+        music_opl_module.PauseMusic();
+    }
 }
 
 void I_ResumeSong(void)
 {
+    if (music_ready)
+    {
+        music_opl_module.ResumeMusic();
+    }
 }
 
 void *I_RegisterSong(void *data, int len)
 {
-    return NULL;
+    return music_ready ? music_opl_module.RegisterSong(data, len) : NULL;
 }
 
 void I_UnRegisterSong(void *handle)
 {
+    if (music_ready)
+    {
+        music_opl_module.UnRegisterSong(handle);
+    }
 }
 
 void I_PlaySong(void *handle, boolean looping)
 {
+    if (music_ready)
+    {
+        music_opl_module.PlaySong(handle, looping);
+    }
 }
 
 void I_StopSong(void)
 {
+    if (music_ready)
+    {
+        music_opl_module.StopSong();
+    }
 }
 
 boolean I_MusicIsPlaying(void)
 {
-    return false;
+    return music_ready && music_opl_module.MusicIsPlaying();
 }
