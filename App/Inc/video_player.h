@@ -38,7 +38,8 @@ typedef struct
 /** Start the video tasks (once). */
 void video_init(void);
 
-/** Open @p path, paused at the start. False (and a log message) if it cannot be played. */
+/** Open @p path, paused at the start. False (and a log message) if it cannot be played.
+ *  The caller holds the workspace (WORKSPACE_VIDEO): the buffers come from it. */
 bool video_open(const char *path, video_info_t *info);
 
 /** Play from the current position (the display must be in video mode). */
@@ -50,7 +51,7 @@ void video_pause(void);
 /** Jump to @p position_ms (paused or playing). */
 void video_seek(uint32_t position_ms);
 
-/** Stop and close the file. */
+/** Stop and close the file; afterwards the workspace is no longer used. */
 void video_close(void);
 
 video_state_t video_state(void);

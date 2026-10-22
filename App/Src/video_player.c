@@ -37,6 +37,7 @@
 #include "main.h"
 #include "minimp3.h"
 #include "player.h"
+#include "workspace.h"
 #include "yuv2rgb.h"
 
 #define SLOTS              6
@@ -68,7 +69,6 @@ static QueueHandle_t     s_ready;
 static TaskHandle_t      s_reader;
 static TaskHandle_t      s_render;
 
-static uint8_t s_slot_mem[SLOTS][SLOT_SIZE] __attribute__((section(".sdram"), aligned(32)));
 static slot_t  s_slots[SLOTS];
 
 static volatile video_state_t s_state = VIDEO_IDLE;
@@ -82,8 +82,7 @@ static bool          s_audio_ok;            /* the audio can be played */
 static uint32_t      s_shown, s_dropped;
 static uint32_t      s_decode_ms;           /* total time spent decoding the shown frames */
 
-/* Audio ring: stereo frames, written by the reader, read by the DMA interrupt */
-static int16_t           s_ring[RING_FRAMES * 2U] __attribute__((section(".sdram"), aligned(32)));
+/* Audio ring (video_mem_t.ring): stereo frames, written by the reader, read by the DMA interrupt */
 static volatile uint32_t s_ring_w, s_ring_r;   /* frames, counting up */
 static int16_t           s_dma[2U * HALF_FRAMES * 2U] DMA_BUFFER;
 static volatile uint32_t s_halves;          /* DMA buffer halves played */
@@ -114,8 +113,18 @@ static const video_layer_t *s_layers[VIDEO_LAYERS];
 static bool                 s_layers_changed;
 static video_layer_t        s_drawn[VIDEO_LAYERS];     /* blended onto s_last_fb */
 static bool                 s_drawn_on[VIDEO_LAYERS];
-static uint16_t             s_under[VIDEO_LAYERS][UNDER_MAX] __attribute__((section(".sdram"), aligned(32)));
 static uint16_t            *s_last_fb;                 /* last frame shown */
+
+/* The big buffers, in the workspace while a video is open (the caller of
+ * video_open() holds it): compressed frames, audio ring, what the layers cover */
+typedef struct
+{
+  uint8_t  slots[SLOTS][SLOT_SIZE];
+  int16_t  ring[RING_FRAMES * 2U];
+  uint16_t under[VIDEO_LAYERS][UNDER_MAX];
+} video_mem_t;
+
+static video_mem_t *s_mem;
 
 /* ---- audio ------------------------------------------------------------------ */
 
@@ -128,8 +137,8 @@ static void ring_take(int16_t *out, uint32_t frames)
   uint32_t n = (avail < frames) ? avail : frames;
   uint32_t r = s_ring_r % RING_FRAMES;
   uint32_t first = (n < RING_FRAMES - r) ? n : RING_FRAMES - r;
-  memcpy(out, &s_ring[r * 2U], first * 4U);
-  memcpy(out + first * 2U, s_ring, (n - first) * 4U);
+  memcpy(out, &s_mem->ring[r * 2U], first * 4U);
+  memcpy(out + first * 2U, s_mem->ring, (n - first) * 4U);
   memset(out + n * 2U, 0, (frames - n) * 4U);
   s_ring_r += n;
 }
@@ -196,8 +205,8 @@ static bool ring_put(const int16_t *pcm, uint32_t frames, uint32_t channels)
     {
       const uint32_t w = s_ring_w % RING_FRAMES;
       const int16_t l = pcm[i * channels];
-      s_ring[w * 2U]      = l;
-      s_ring[w * 2U + 1U] = (channels == 2U) ? pcm[i * 2U + 1U] : l;
+      s_mem->ring[w * 2U]      = l;
+      s_mem->ring[w * 2U + 1U] = (channels == 2U) ? pcm[i * 2U + 1U] : l;
       s_ring_w++;
     }
   }
@@ -491,7 +500,7 @@ static void show_frame(const slot_t *slot)
       if (s_drawn_on[i])
       {
         s_drawn[i] = *s_layers[i];
-        blend_layer(fb, &s_drawn[i], s_under[i]);
+        blend_layer(fb, &s_drawn[i], s_mem->under[i]);
       }
     }
     xSemaphoreGive(s_layer_lock);
@@ -629,7 +638,7 @@ void video_init(void)
   configASSERT(s_ctrl && s_reader_lock && s_render_lock && s_layer_lock && s_free && s_ready);
   for (uint32_t i = 0; i < SLOTS; i++)
   {
-    s_slots[i].data = s_slot_mem[i];
+    s_slots[i].data = NULL;
     xQueueSend(s_free, &i, 0);
   }
   yuv2rgb_init();
@@ -667,14 +676,19 @@ bool video_open(const char *path, video_info_t *info)
   else
   {
     const avi_result_t r = avi_open(&s_file, &s_avi);
-    if (r != AVI_OK)
+    s_mem = (r == AVI_OK) ? workspace_alloc(WORKSPACE_VIDEO, sizeof(video_mem_t)) : NULL;
+    if (r != AVI_OK || s_mem == NULL)
     {
-      LOG_WARN("video: %s: %s", path, avi_result_str(r));
+      LOG_WARN("video: %s: %s", path, (r != AVI_OK) ? avi_result_str(r) : "no memory (workspace)");
       f_close(&s_file);
     }
     else
     {
       ok = true;
+      for (uint32_t i = 0; i < SLOTS; i++)
+      {
+        s_slots[i].data = s_mem->slots[i];
+      }
       s_audio_ok = s_avi.has_audio && audio_out_is_rate_supported(s_avi.sample_rate);
       if (s_avi.has_audio && !s_audio_ok)
       {
@@ -829,7 +843,7 @@ void video_copy_frame(uint16_t *dst)
     {
       for (uint32_t y = 0; y < s_drawn[i].h; y++)
       {
-        memcpy(layer_row(dst, &s_drawn[i], y), &s_under[i][y * s_drawn[i].w], s_drawn[i].w * 2U);
+        memcpy(layer_row(dst, &s_drawn[i], y), &s_mem->under[i][y * s_drawn[i].w], s_drawn[i].w * 2U);
       }
     }
   }

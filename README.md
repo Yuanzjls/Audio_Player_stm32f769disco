@@ -136,7 +136,7 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
@@ -176,6 +176,7 @@ there is nothing to do:
 | Cover | The hardware JPEG codec, fed and drained by DMA; its interrupts wake the `cover` task, which averages the output into the 160 px cover and renders the blurred backdrop. |
 | Video | The same codec decodes each frame; the CPU converts its YCbCr output to RGB565 (two pixels per SIMD instruction) straight into the free frame buffer, which is shown on the next tearing-effect interrupt. LVGL does not draw meanwhile: the controls are rendered off screen and blended onto the frames. The audio DMA interrupt refills its buffer from the ring and counts what has played: that is the clock. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
+| Memory | The video player (3.6 MB of frame slots, audio ring and overlays) and the Files app (folder list) are never on screen together, so they share one SDRAM workspace (`workspace.c`): each takes it when it starts and gives it back when it is left. |
 | Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
 
 The status line measures the CPU load as the share of time not spent in that `WFI` (timed with TIM2).

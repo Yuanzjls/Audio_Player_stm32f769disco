@@ -21,6 +21,7 @@
 #include "player.h"
 #include "shell.h"
 #include "theme.h"
+#include "workspace.h"
 
 #define MAX_ENTRIES   2048
 #define PATH_MAX_LEN  512
@@ -44,9 +45,10 @@ typedef struct
 
 typedef enum { KIND_DIR, KIND_AUDIO, KIND_VIDEO, KIND_IMAGE, KIND_TEXT, KIND_OTHER } kind_t;
 
-/* Large: in SDRAM */
-static entry_t  s_entries[MAX_ENTRIES] __attribute__((section(".sdram")));
-static uint16_t s_order[MAX_ENTRIES] __attribute__((section(".sdram")));
+/* The folder list is in the workspace while the app is on screen
+ * (files_acquire); the text viewer's buffer is small */
+static entry_t  *s_entries;           /* MAX_ENTRIES */
+static uint16_t *s_order;             /* MAX_ENTRIES, sorted */
 static char     s_text[TEXT_MAX + 1] __attribute__((section(".sdram")));
 static uint32_t s_count;
 static bool     s_truncated;          /* the folder has more than MAX_ENTRIES entries */
@@ -584,6 +586,9 @@ static int32_t library_index(const char *path)
   return -1;
 }
 
+static void files_show(void);
+static void files_release(void);
+
 static void open_entry(int32_t index)
 {
   const entry_t *e = &s_entries[s_order[index]];
@@ -619,8 +624,11 @@ static void open_entry(int32_t index)
     }
 
     case KIND_VIDEO:
+      /* The video player needs the workspace: give it up first, take it back if the video cannot be played */
+      files_release();
       if (!app_video_play_file(path, &app_files))
       {
+        files_show();
         toast("This video cannot be played (MJPEG .avi only).");
       }
       return;
@@ -762,10 +770,50 @@ static void files_create(lv_obj_t *screen)
   build_viewer(screen);
 }
 
+/* Take the workspace for the folder list */
+static bool files_acquire(void)
+{
+  if (!workspace_take(WORKSPACE_FILES))
+  {
+    return false;
+  }
+  s_entries = workspace_alloc(WORKSPACE_FILES, MAX_ENTRIES * sizeof(entry_t));
+  s_order   = workspace_alloc(WORKSPACE_FILES, MAX_ENTRIES * sizeof(uint16_t));
+  if (s_entries == NULL || s_order == NULL)
+  {
+    s_entries = NULL;
+    s_order   = NULL;
+    workspace_give(WORKSPACE_FILES);
+    return false;
+  }
+  return true;
+}
+
+/* Give the workspace back (the list is read again when the app comes back) */
+static void files_release(void)
+{
+  close_viewer();
+  s_count = 0;
+  for (uint32_t k = 0; k < POOL; k++)
+  {
+    lv_obj_set_hidden(s_rows[k], true);
+    s_row_index[k] = -1;
+  }
+  s_entries = NULL;
+  s_order   = NULL;
+  workspace_give(WORKSPACE_FILES);
+}
+
 static void files_show(void)
 {
   /* Read again: the card may have changed. Keep the place in the folder. */
   const int32_t y = lv_obj_get_scroll_y(s_list);
+  if (s_entries == NULL && !files_acquire())
+  {
+    lv_label_set_text(s_empty, "Not enough memory.");
+    lv_obj_set_hidden(s_empty, false);
+    return;
+  }
   load(NULL);
   lv_obj_scroll_to_y(s_list, y, LV_ANIM_OFF);
   layout_rows();
@@ -773,7 +821,7 @@ static void files_show(void)
 
 static void files_hide(void)
 {
-  close_viewer();
+  files_release();
   lv_obj_set_hidden(s_toast, true);
   lv_timer_pause(s_toast_timer);
 }

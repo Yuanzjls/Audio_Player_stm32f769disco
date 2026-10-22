@@ -23,6 +23,7 @@
 #include "shell.h"
 #include "theme.h"
 #include "video_player.h"
+#include "workspace.h"
 
 #define VIDEO_DIR      "/Avi"
 #define MAX_VIDEOS     64
@@ -75,15 +76,11 @@ static uint32_t     s_ctrl_drawn;     /* tick of their last snapshot */
 static bool         s_ctrl_dirty;     /* they changed: snapshot again */
 
 /* The frame shown when paused, as the player view's background */
-static uint16_t      s_still_px[DISPLAY_WIDTH * DISPLAY_HEIGHT] __attribute__((section(".sdram"), aligned(32)));
 static lv_image_dsc_t s_still_dsc;
 
 /* Controls over the playing video: snapshot (ARGB8888) of each bar, turned
  * into a layer; two sets, the video player blends one while the other is drawn */
-static uint8_t       s_snap_mem[DISPLAY_WIDTH * BAR_H * 4U] __attribute__((section(".sdram"), aligned(32)));
 static lv_draw_buf_t s_snap;
-static uint16_t      s_ctrl_rgb[2][DISPLAY_WIDTH * (TOP_H + BAR_H)] __attribute__((section(".sdram"), aligned(32)));
-static uint8_t       s_ctrl_alpha[2][DISPLAY_WIDTH * (TOP_H + BAR_H)] __attribute__((section(".sdram"), aligned(32)));
 static video_layer_t s_ctrl_layers[2][2];
 static uint32_t      s_ctrl_set;
 
@@ -92,12 +89,23 @@ static uint32_t      s_ctrl_set;
 #define STATS_W         330
 #define STATS_H         26
 #define STATS_PERIOD_MS 1000
-static uint16_t      s_stats_px[2][STATS_W * STATS_H] __attribute__((section(".sdram"), aligned(32)));
 static video_layer_t s_stats_layers[2];
 static uint32_t      s_stats_set;
-static lv_obj_t     *s_stats_canvas;   /* hidden: only draws into s_stats_px */
+static lv_obj_t     *s_stats_canvas;   /* hidden: only draws into s_mem->stats_px */
 static bool          s_stats_on = true;
 static uint32_t      s_rate_ms, s_rate_shown, s_rate_decode;
+
+/* The pixels of the above, in the workspace while a video is open */
+typedef struct
+{
+  uint16_t still_px[DISPLAY_WIDTH * DISPLAY_HEIGHT] __attribute__((aligned(32)));
+  uint8_t  snap_mem[DISPLAY_WIDTH * BAR_H * 4U] __attribute__((aligned(32)));
+  uint16_t ctrl_rgb[2][DISPLAY_WIDTH * (TOP_H + BAR_H)] __attribute__((aligned(32)));
+  uint8_t  ctrl_alpha[2][DISPLAY_WIDTH * (TOP_H + BAR_H)] __attribute__((aligned(32)));
+  uint16_t stats_px[2][STATS_W * STATS_H] __attribute__((aligned(32)));
+} video_ui_mem_t;
+
+static video_ui_mem_t *s_mem;
 
 /* ---- helpers --------------------------------------------------------------- */
 
@@ -238,8 +246,8 @@ static void to_layer(const lv_draw_buf_t *src, uint16_t *rgb, uint8_t *alpha)
 
 static bool snapshot(lv_obj_t *obj, uint32_t h, uint16_t *rgb, uint8_t *alpha)
 {
-  if (lv_draw_buf_init(&s_snap, DISPLAY_WIDTH, h, LV_COLOR_FORMAT_ARGB8888, DISPLAY_WIDTH * 4U, s_snap_mem,
-                       sizeof(s_snap_mem)) != LV_RESULT_OK ||
+  if (lv_draw_buf_init(&s_snap, DISPLAY_WIDTH, h, LV_COLOR_FORMAT_ARGB8888, DISPLAY_WIDTH * 4U, s_mem->snap_mem,
+                       sizeof(s_mem->snap_mem)) != LV_RESULT_OK ||
       lv_snapshot_take_to_draw_buf(obj, LV_COLOR_FORMAT_ARGB8888, &s_snap) != LV_RESULT_OK ||
       s_snap.header.w != DISPLAY_WIDTH || s_snap.header.h != h)
   {
@@ -254,14 +262,14 @@ static void draw_controls_layers(void)
 {
   const uint32_t k = s_ctrl_set ^ 1U;
   lv_obj_update_layout(s_player);   /* LVGL does not refresh the screen meanwhile */
-  if (!snapshot(s_top, TOP_H, s_ctrl_rgb[k], s_ctrl_alpha[k]) ||
-      !snapshot(s_bar, BAR_H, &s_ctrl_rgb[k][DISPLAY_WIDTH * TOP_H], &s_ctrl_alpha[k][DISPLAY_WIDTH * TOP_H]))
+  if (!snapshot(s_top, TOP_H, s_mem->ctrl_rgb[k], s_mem->ctrl_alpha[k]) ||
+      !snapshot(s_bar, BAR_H, &s_mem->ctrl_rgb[k][DISPLAY_WIDTH * TOP_H], &s_mem->ctrl_alpha[k][DISPLAY_WIDTH * TOP_H]))
   {
     LOG_WARN("video: controls snapshot failed");
     return;
   }
-  s_ctrl_layers[k][0] = (video_layer_t){ s_ctrl_rgb[k], s_ctrl_alpha[k], 0, 0, DISPLAY_WIDTH, TOP_H };
-  s_ctrl_layers[k][1] = (video_layer_t){ &s_ctrl_rgb[k][DISPLAY_WIDTH * TOP_H], &s_ctrl_alpha[k][DISPLAY_WIDTH * TOP_H],
+  s_ctrl_layers[k][0] = (video_layer_t){ s_mem->ctrl_rgb[k], s_mem->ctrl_alpha[k], 0, 0, DISPLAY_WIDTH, TOP_H };
+  s_ctrl_layers[k][1] = (video_layer_t){ &s_mem->ctrl_rgb[k][DISPLAY_WIDTH * TOP_H], &s_mem->ctrl_alpha[k][DISPLAY_WIDTH * TOP_H],
                                          0, DISPLAY_HEIGHT - BAR_H, DISPLAY_WIDTH, BAR_H };
   video_set_layer(LAYER_TOP, &s_ctrl_layers[k][0]);
   video_set_layer(LAYER_BAR, &s_ctrl_layers[k][1]);
@@ -279,7 +287,7 @@ static void remove_controls_layers(void)
 static void draw_stats(const char *text)
 {
   const uint32_t k = s_stats_set ^ 1U;
-  lv_canvas_set_buffer(s_stats_canvas, s_stats_px[k], STATS_W, STATS_H, LV_COLOR_FORMAT_RGB565);
+  lv_canvas_set_buffer(s_stats_canvas, s_mem->stats_px[k], STATS_W, STATS_H, LV_COLOR_FORMAT_RGB565);
   lv_canvas_fill_bg(s_stats_canvas, lv_color_black(), LV_OPA_COVER);
 
   lv_layer_t layer;
@@ -294,7 +302,7 @@ static void draw_stats(const char *text)
   lv_canvas_finish_layer(s_stats_canvas, &layer);
 
   /* Below the top bar, so that the controls never cover it */
-  s_stats_layers[k] = (video_layer_t){ s_stats_px[k], NULL, 12, TOP_H + 12, STATS_W, STATS_H };
+  s_stats_layers[k] = (video_layer_t){ s_mem->stats_px[k], NULL, 12, TOP_H + 12, STATS_W, STATS_H };
   video_set_layer(LAYER_STATS, &s_stats_layers[k]);
   s_stats_set = k;
 }
@@ -393,7 +401,7 @@ static void stop_playing(void)
   }
   video_pause();
   log_stats("paused");
-  video_copy_frame(s_still_px);
+  video_copy_frame(s_mem->still_px);
   video_set_layer(LAYER_STATS, NULL);
   remove_controls_layers();
   lv_image_set_src(s_still, &s_still_dsc);
@@ -412,16 +420,24 @@ static void close_video(void)
     s_open = false;
     hide_controls();
     lv_obj_set_hidden(s_player, true);
+    lv_image_set_src(s_still, NULL);
+    s_mem = NULL;
+    workspace_give(WORKSPACE_VIDEO);
   }
 }
 
 /* Open a file and show the player view over the list; false if it cannot be played */
 static bool open_file(const char *path, const char *name)
 {
-  if (!video_open(path, &s_info))
+  /* All the big buffers come from the workspace, for as long as the video is open */
+  s_mem = workspace_take(WORKSPACE_VIDEO) ? workspace_alloc(WORKSPACE_VIDEO, sizeof(*s_mem)) : NULL;
+  if (s_mem == NULL || !video_open(path, &s_info))
   {
+    s_mem = NULL;
+    workspace_give(WORKSPACE_VIDEO);
     return false;
   }
+  s_still_dsc.data = (const uint8_t *)s_mem->still_px;
   player_release_audio();
   s_open = true;
 
@@ -631,8 +647,8 @@ static void build_player(lv_obj_t *screen)
   s_still_dsc.header.w      = DISPLAY_WIDTH;
   s_still_dsc.header.h      = DISPLAY_HEIGHT;
   s_still_dsc.header.stride = DISPLAY_WIDTH * 2U;
-  s_still_dsc.data_size     = sizeof(s_still_px);
-  s_still_dsc.data          = (const uint8_t *)s_still_px;
+  s_still_dsc.data_size     = sizeof(s_mem->still_px);
+  s_still_dsc.data          = NULL;   /* set when a video is opened (workspace) */
   s_still = lv_image_create(s_player);
   lv_obj_set_pos(s_still, 0, 0);
   lv_obj_set_hidden(s_still, true);
