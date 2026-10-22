@@ -93,6 +93,13 @@ static void build_strips(lv_obj_t *screen)
 
 /* ---- playing --------------------------------------------------------------------- */
 
+static bool card_missing(void)
+{
+  player_status_t st;
+  player_get_status(&st);
+  return st.state == PLAYER_STATE_NO_CARD;
+}
+
 static void show_state(void)
 {
   if (doom_state() == DOOM_ENDED)
@@ -101,6 +108,12 @@ static void show_state(void)
     lv_label_set_text_fmt(s_message, "%s\n\nDoom cannot be started again: restart the board to play.",
                           why != NULL ? why : "Doom has quit.");
     lv_obj_set_hidden(s_restart, false);
+  }
+  else if (card_missing())
+  {
+    lv_label_set_text(s_message, "No SD card. Doom needs its game data, DOOM1.WAD (the shareware "
+                                 "episode), DOOM.WAD or DOOM2.WAD, in " DOOM_DIR " on the card.");
+    lv_obj_set_hidden(s_restart, true);
   }
   else if (!doom_find_iwad())
   {

@@ -184,7 +184,11 @@ static void rebuild_list(void)
   scan();
   if (s_count == 0U)
   {
-    lv_label_set_text(s_empty, "No videos: put MJPEG .avi files into " VIDEO_DIR " on the SD card.");
+    player_status_t st;
+    player_get_status(&st);
+    lv_label_set_text(s_empty, (st.state == PLAYER_STATE_NO_CARD)
+                                 ? "No SD card."
+                                 : "No videos: put MJPEG .avi files into " VIDEO_DIR " on the SD card.");
     lv_obj_set_hidden(s_empty, false);
     return;
   }

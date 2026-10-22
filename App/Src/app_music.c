@@ -43,6 +43,7 @@
 #define LIBRARY_HEADER_H    64
 #define LIBRARY_ITEM_H      56
 #define LIBRARY_LIST_H      (480 - LIBRARY_HEADER_H)
+#define LIBRARY_HINT        "Put .mp3 or .wav files in /Music"   /* shown while the library is empty */
 /* Row widgets that are recycled while scrolling: the visible rows plus margin */
 #define LIBRARY_POOL        ((LIBRARY_LIST_H / LIBRARY_ITEM_H) + 3)
 #define PANEL_X             LIBRARY_WIDTH
@@ -554,6 +555,7 @@ static void refresh_cb(lv_timer_t *timer)
   if (first || st.state != s_status.state)
   {
     lv_label_set_text(s_ui.btn_play_icon, st.state == PLAYER_STATE_PLAYING ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    lv_label_set_text(s_ui.list_hint, st.state == PLAYER_STATE_NO_CARD ? "No SD card" : LIBRARY_HINT);
   }
   set_controls_enabled(has_tracks);   /* no-op if the state is unchanged */
 
@@ -794,7 +796,10 @@ static void build_library_panel(lv_obj_t *scr)
   }
 
   s_ui.list_hint = make_label(panel, &lv_font_montserrat_20, COLOR_TEXT_DIM);
-  lv_label_set_text(s_ui.list_hint, "Put .wav files in /Music");
+  lv_label_set_long_mode(s_ui.list_hint, LV_LABEL_LONG_MODE_WRAP);
+  lv_obj_set_width(s_ui.list_hint, LIBRARY_WIDTH - 48);
+  lv_obj_set_style_text_align(s_ui.list_hint, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text(s_ui.list_hint, LIBRARY_HINT);
   lv_obj_align(s_ui.list_hint, LV_ALIGN_CENTER, 0, 0);
 }
 
