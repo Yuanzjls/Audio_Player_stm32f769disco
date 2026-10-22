@@ -63,6 +63,7 @@ typedef enum
   CMD_SET_REPEAT,
   CMD_SET_SHUFFLE,
   CMD_RELEASE_AUDIO,
+  CMD_PLAY_FILE,
 } command_type_t;
 
 typedef struct
@@ -89,6 +90,8 @@ static player_status_t   s_status;      /* guarded by s_status_mutex */
 static FATFS   s_fs;
 static track_t s_track;
 static uint32_t s_output_rate;          /* rate the output is configured for, 0 = none */
+static char     s_current_path[PLAYER_PATH_MAX];   /* file being played; guarded by s_status_mutex */
+static char     s_file_request[PLAYER_PATH_MAX];   /* player_play_file(); guarded by s_status_mutex */
 
 /* Restart the current track instead of going back when past this position */
 #define PREV_RESTART_AFTER_S  3U
@@ -203,20 +206,15 @@ static void close_track(void)
   }
 }
 
-/* Open and validate track @p index. On success the status is updated. */
-static bool open_track(uint16_t index)
+/* Open and validate the file at @p path, named @p file_name; it counts as
+ * library entry @p index (the current one for a file from elsewhere). On
+ * success the status is updated. */
+static bool open_path(const char *path, const char *file_name, uint16_t index, bool from_file)
 {
   char name[PLAYER_TITLE_MAX];
-  char path[sizeof(PLAYER_MUSIC_DIR) + 1 + PLAYER_TITLE_MAX];
 
   close_track();
-  if (index >= track_count())
-  {
-    return false;
-  }
-  snprintf(name, sizeof(name), "%s", NAME(index));
-
-  snprintf(path, sizeof(path), "%s/%s", PLAYER_MUSIC_DIR, name);
+  snprintf(name, sizeof(name), "%s", file_name);
   if (!decoder_open(path, &s_track.info))
   {
     return false;
@@ -239,6 +237,8 @@ static bool open_track(uint16_t index)
 
   status_lock();
   s_status.track_index  = index;
+  s_status.from_file    = from_file;
+  snprintf(s_current_path, sizeof(s_current_path), "%s", path);
   s_status.position_s   = 0;
   s_status.duration_s   = info->duration_s;
   s_status.sample_rate  = info->sample_rate;
@@ -259,6 +259,20 @@ static bool open_track(uint16_t index)
            (unsigned long)info->bitrate_kbps, info->vbr ? " VBR" : "",
            (unsigned long)info->duration_s, info->duration_exact ? "" : " estimated");
   return true;
+}
+
+/* Open and validate library track @p index */
+static bool open_track(uint16_t index)
+{
+  char path[sizeof(PLAYER_MUSIC_DIR) + 1 + PLAYER_TITLE_MAX];
+
+  close_track();
+  if (index >= track_count())
+  {
+    return false;
+  }
+  snprintf(path, sizeof(path), "%s/%s", PLAYER_MUSIC_DIR, NAME(index));
+  return open_path(path, NAME(index), index, false);
 }
 
 /* Open @p index, or the next playable track after it (wrapping around). */
@@ -508,19 +522,59 @@ static void play_track(uint16_t index)
   start_output();
 }
 
+/* Play the file at @p path, from outside the library */
+static void play_file(const char *path)
+{
+  const uint32_t previous_rate = s_track.open ? s_track.info.sample_rate : 0U;
+  const bool was_playing = (get_state() == PLAYER_STATE_PLAYING);
+  const char *slash = strrchr(path, '/');
+
+  if (!open_path(path, (slash != NULL) ? slash + 1 : path, track_index(), true))
+  {
+    /* Back to the library's track, stopped */
+    LOG_WARN("player: %s cannot be played", path);
+    stop_output();
+    const uint16_t count = track_count();
+    if (count != 0U && open_playable_track(track_index(), count))
+    {
+      set_state(PLAYER_STATE_STOPPED, "This file cannot be played");
+    }
+    else
+    {
+      set_state(PLAYER_STATE_NO_TRACKS, "This file cannot be played");
+    }
+    return;
+  }
+  if (was_playing && s_track.info.sample_rate == previous_rate && s_output_rate == previous_rate)
+  {
+    return;
+  }
+  stop_output();
+  start_output();
+}
+
 static void on_track_finished(void)
 {
   player_repeat_t repeat;
+  bool from_file;
   status_lock();
-  repeat = s_status.repeat;
+  repeat    = s_status.repeat;
+  from_file = s_status.from_file;
   status_unlock();
 
-  if (repeat == PLAYER_REPEAT_ONE)
+  if (repeat == PLAYER_REPEAT_ONE || from_file)
   {
     uint32_t actual_s;
     decoder_seek(0, &actual_s);
     s_track.frames_out    = 0;
     s_track.silent_halves = 0;
+    if (from_file && repeat != PLAYER_REPEAT_ONE)
+    {
+      /* A file from elsewhere: stays loaded, stopped at its start */
+      stop_output();
+      update_position();
+      set_state(PLAYER_STATE_STOPPED, NULL);
+    }
     return;
   }
 
@@ -571,8 +625,9 @@ static void seek(uint32_t position_s)
 static void handle_command(const command_t *cmd)
 {
   const player_state_t state = get_state();
+  /* A file from elsewhere may play while the library is empty */
   const bool has_tracks = (state == PLAYER_STATE_STOPPED || state == PLAYER_STATE_PLAYING ||
-                           state == PLAYER_STATE_PAUSED);
+                           state == PLAYER_STATE_PAUSED) && track_count() != 0U;
 
   switch (cmd->type)
   {
@@ -675,6 +730,17 @@ static void handle_command(const command_t *cmd)
         set_state(PLAYER_STATE_STOPPED, NULL);
       }
       xSemaphoreGive(s_audio_released);
+      break;
+
+    case CMD_PLAY_FILE:
+      if (state != PLAYER_STATE_NO_CARD)
+      {
+        static char path[PLAYER_PATH_MAX];
+        status_lock();
+        snprintf(path, sizeof(path), "%s", s_file_request);
+        status_unlock();
+        play_file(path);
+      }
       break;
   }
 }
@@ -901,6 +967,26 @@ bool player_get_track_path(uint16_t index, char *path, size_t len)
   status_unlock();
   return ok;
 }
+bool player_get_current_path(char *path, size_t len)
+{
+  status_lock();
+  const bool ok = s_current_path[0] != '\0' && len > 0U;
+  if (ok)
+  {
+    snprintf(path, len, "%s", s_current_path);
+  }
+  status_unlock();
+  return ok;
+}
+
+void player_play_file(const char *path)
+{
+  status_lock();
+  snprintf(s_file_request, sizeof(s_file_request), "%s", path);
+  status_unlock();
+  send_command(CMD_PLAY_FILE, 0);
+}
+
 void player_seek(uint32_t position_s)       { send_command(CMD_SEEK, position_s); }
 void player_set_repeat(player_repeat_t r)   { send_command(CMD_SET_REPEAT, (uint32_t)r); }
 void player_set_shuffle(bool shuffle)       { send_command(CMD_SET_SHUFFLE, shuffle ? 1U : 0U); }

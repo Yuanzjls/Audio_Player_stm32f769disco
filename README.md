@@ -19,7 +19,7 @@ user interface on FreeRTOS.
   a frame that comes too late is dropped. A tap shows the controls over the playing video (pause,
   seek, back, home, an fps / decode time / CPU overlay).
 * **File explorer**: browse the folders of the SD card (name, size, date; item count and free
-  space). A tap plays a song of /Music or an .avi video in its app (Back returns to the folder),
+  space). A tap plays a song (from any folder) or an .avi video in its app (Back returns to the folder),
   or shows a file's details and, for text files, its first 8 KB.
 * **MP3 and WAV**, including variable-bitrate MP3, with title, artist and length from the ID3 tags.
 * **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,

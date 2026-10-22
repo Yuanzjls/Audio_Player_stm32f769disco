@@ -3,8 +3,8 @@
  * @brief Files app: browse the folders of the SD card.
  *
  * Folders come first, then files, each sorted by name (hidden and system
- * entries are left out). A tap on a folder opens it; on a song of /Music it
- * plays the song in the Music app; on an .avi file it plays the video in the
+ * entries are left out). A tap on a folder opens it; on a song (any folder)
+ * it plays the song in the Music app; on an .avi file it plays the video in the
  * Video app; on any other file it shows its details and, for text files, the
  * beginning of the text.
  *
@@ -527,10 +527,6 @@ static void open_viewer(const char *path, const entry_t *e, kind_t kind)
       message = "No preview: this is not a text file.";
     }
   }
-  else if (kind == KIND_AUDIO)
-  {
-    message = "Songs are played from " PLAYER_MUSIC_DIR ": copy it there to play it.";
-  }
   else
   {
     message = "No preview for this type of file.";
@@ -608,14 +604,18 @@ static void open_entry(int32_t index)
 
     case KIND_AUDIO:
     {
+      /* A library song plays as one (its place in the shuffle order); any other file as it is */
       const int32_t track = library_index(path);
       if (track >= 0)
       {
         player_play_track((uint16_t)track);
-        shell_open(&app_music);
-        return;
       }
-      break;
+      else
+      {
+        player_play_file(path);
+      }
+      shell_open(&app_music);
+      return;
     }
 
     case KIND_VIDEO:

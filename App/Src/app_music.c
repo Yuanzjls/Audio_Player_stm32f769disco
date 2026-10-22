@@ -379,7 +379,7 @@ static void highlight_library_row(int32_t index)
   /* Bring the playing track into view if it is not (fully) visible */
   const int32_t top    = index * LIBRARY_ITEM_H;
   const int32_t scroll = lv_obj_get_scroll_y(s_ui.list);
-  if (top < scroll || top + LIBRARY_ITEM_H > scroll + LIBRARY_LIST_H)
+  if (index >= 0 && (top < scroll || top + LIBRARY_ITEM_H > scroll + LIBRARY_LIST_H))
   {
     lv_obj_scroll_to_y(s_ui.list, (top > LIBRARY_ITEM_H) ? top - LIBRARY_ITEM_H : 0, LV_ANIM_ON);
   }
@@ -415,11 +415,11 @@ static void show_cover(const lv_image_dsc_t *image, const lv_image_dsc_t *backdr
  * stays until the result is known (no flash of the plain panel in between). */
 static void request_cover(const player_status_t *st)
 {
-  char path[sizeof(PLAYER_MUSIC_DIR) + PLAYER_TITLE_MAX + 1];
+  char path[PLAYER_PATH_MAX];
 
   s_cover_id   = st->track_serial;
   s_cover_done = false;
-  if (!player_get_track_path(st->track_index, path, sizeof(path)))
+  if (!player_get_current_path(path, sizeof(path)))
   {
     s_cover_done = true;
     show_cover(NULL, NULL);
@@ -471,13 +471,23 @@ static void refresh_track(const player_status_t *st)
   lv_label_set_text(s_ui.title, title);
 
   /* Kept short: it shares the header line with the "NOW PLAYING" caption */
-  lv_label_set_text_fmt(s_ui.track_info, "%u / %u   %s  %lu.%lu kHz",
-                        (unsigned)st->track_index + 1U, (unsigned)st->track_count, st->format,
-                        (unsigned long)(st->sample_rate / 1000U),
-                        (unsigned long)((st->sample_rate % 1000U) / 100U));
+  if (st->from_file)
+  {
+    /* A file from the Files app, not one of the library's */
+    lv_label_set_text_fmt(s_ui.track_info, "File   %s  %lu.%lu kHz", st->format,
+                          (unsigned long)(st->sample_rate / 1000U),
+                          (unsigned long)((st->sample_rate % 1000U) / 100U));
+  }
+  else
+  {
+    lv_label_set_text_fmt(s_ui.track_info, "%u / %u   %s  %lu.%lu kHz",
+                          (unsigned)st->track_index + 1U, (unsigned)st->track_count, st->format,
+                          (unsigned long)(st->sample_rate / 1000U),
+                          (unsigned long)((st->sample_rate % 1000U) / 100U));
+  }
 
   set_duration(st->duration_s);
-  highlight_library_row(st->track_index);
+  highlight_library_row(st->from_file ? -1 : (int32_t)st->track_index);
   request_cover(st);
 }
 

@@ -21,6 +21,7 @@ extern "C" {
 #define PLAYER_TITLE_MAX   256   /* bytes, UTF-8, including terminator */
 #define PLAYER_MAX_TRACKS  4096  /* library size limit (names cached in SDRAM: 1 MB) */
 #define PLAYER_MESSAGE_MAX 64
+#define PLAYER_PATH_MAX    512   /* bytes, UTF-8, of a file path */
 
 typedef enum
 {
@@ -54,6 +55,7 @@ typedef struct
   char            format[8];     /**< "WAV", "MP3" */
   uint32_t        track_serial;  /**< changes whenever a new track is loaded */
   uint32_t        library_serial;/**< changes whenever the track list is (re)read */
+  bool            from_file;     /**< the track is a file played with player_play_file(), not from the library */
   char            title[PLAYER_TITLE_MAX];   /**< tag title, else the file name */
   char            artist[PLAYER_TITLE_MAX];  /**< tag artist, may be empty       */
   char            message[PLAYER_MESSAGE_MAX]; /**< error / hint for the user, may be empty */
@@ -81,11 +83,21 @@ void player_prev(void);
 /** Play track @p index of the library (0-based). */
 void player_play_track(uint16_t index);
 
+/**
+ * Play the music file at @p path (any folder; the Files app). It is not added
+ * to the library: next / previous go on from the library's current track, and
+ * when the file ends it stays loaded, stopped at its start.
+ */
+void player_play_file(const char *path);
+
 /** Copy the display name (file name without its extension) of library entry @p index. */
 bool player_get_track_name(uint16_t index, char *name, size_t len);
 
 /** Copy the full path of the file of library entry @p index. */
 bool player_get_track_path(uint16_t index, char *path, size_t len);
+
+/** Copy the full path of the file being played (library track or player_play_file()). */
+bool player_get_current_path(char *path, size_t len);
 void player_seek(uint32_t position_s);
 void player_set_volume(uint8_t volume);
 void player_set_repeat(player_repeat_t repeat);
