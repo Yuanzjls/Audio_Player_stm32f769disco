@@ -56,6 +56,7 @@ typedef struct
   char            format[8];     /**< "WAV", "MP3" */
   uint32_t        track_serial;  /**< changes whenever a new track is loaded */
   uint32_t        library_serial;/**< changes whenever the track list is (re)read */
+  uint32_t        card_serial;   /**< changes whenever a card is mounted */
   bool            from_file;     /**< the track is a file played with player_play_file(), not from the library */
   char            title[PLAYER_TITLE_MAX];   /**< tag title, else the file name */
   char            artist[PLAYER_TITLE_MAX];  /**< tag artist, may be empty       */

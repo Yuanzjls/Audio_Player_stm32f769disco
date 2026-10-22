@@ -87,7 +87,7 @@ static bool               s_settings_applied;
 static int32_t            s_seen_volume = -1;   /* player volume at the last check */
 static uint32_t           s_ticks;
 
-static bool       s_fonts_tried;
+static uint32_t   s_fonts_card = UINT32_MAX;   /* card_serial of the card the fonts were looked for on */
 static lv_font_t *s_font_title;
 static lv_font_t *s_font_text;
 
@@ -247,14 +247,9 @@ static bool file_exists(const char *path)
   return true;
 }
 
-/* Called once the SD card is mounted; tries a single time. */
+/* Called when a card has been mounted, until the fonts are loaded */
 static void try_load_fonts(void)
 {
-  if (s_fonts_tried)
-  {
-    return;
-  }
-  s_fonts_tried = true;
 
   for (size_t i = 0; i < sizeof(k_font_paths) / sizeof(k_font_paths[0]); i++)
   {
@@ -511,8 +506,10 @@ static void status_cb(lv_timer_t *timer)
   (void)timer;
   player_get_status(&s_status);
   manage_settings();
-  if (s_status.state != PLAYER_STATE_NO_CARD)
+  /* The fonts: on each card mounted (one put in later too), until they load */
+  if (s_status.state != PLAYER_STATE_NO_CARD && s_font_title == NULL && s_status.card_serial != s_fonts_card)
   {
+    s_fonts_card = s_status.card_serial;
     try_load_fonts();
   }
   if (++s_ticks % CPU_PERIOD_TICKS == 0U)

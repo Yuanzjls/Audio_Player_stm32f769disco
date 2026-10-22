@@ -823,6 +823,7 @@ static bool try_mount(void)
   static const char *const k_fs_names[] = { "?", "FAT12", "FAT16", "FAT32", "exFAT" };
   status_lock();
   s_status.card_mb = (uint32_t)(((uint64_t)(s_fs.n_fatent - 2U) * s_fs.csize) / 2048U);
+  s_status.card_serial++;
   snprintf(s_status.card_fs, sizeof(s_status.card_fs), "%s",
            k_fs_names[(s_fs.fs_type <= FS_EXFAT) ? s_fs.fs_type : 0]);
   status_unlock();

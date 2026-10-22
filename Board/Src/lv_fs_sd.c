@@ -6,8 +6,15 @@
  * glyf). Without fast seek, every backwards f_lseek walks the file's cluster
  * chain in the FAT from the beginning, costing extra SD reads per glyph. With
  * a cluster link map (FF_USE_FASTSEEK) a seek costs no I/O at all.
+ *
+ * A file stays open for as long as LVGL uses it (the font for good). When the
+ * card is taken out and put back, its FatFs handle is no longer valid: a read
+ * or seek that fails reopens the file by its path, at the same position, so
+ * the font works again once the card is back.
  */
 #include "lv_fs_sd.h"
+
+#include <string.h>
 
 #include "lvgl.h"
 
@@ -18,6 +25,7 @@ typedef struct
 {
   FIL    fil;
   DWORD *linkmap;
+  char  *path;                    /* to reopen the file after a remount */
 } sd_file_t;
 
 static lv_fs_drv_t s_drv;
@@ -34,26 +42,10 @@ bool fatfs_enable_fast_seek(FIL *file, DWORD *table, UINT table_len)
   return true;
 }
 
-static void *fs_open(lv_fs_drv_t *drv, const char *path, lv_fs_mode_t mode)
+/* Cluster link map: on FR_NOT_ENOUGH_CORE FatFs stores the size it needs in [0] */
+static void setup_fast_seek(sd_file_t *f)
 {
-  (void)drv;
-  if (mode != LV_FS_MODE_RD)
-  {
-    return NULL;   /* the card is read-only */
-  }
-
-  sd_file_t *f = lv_malloc(sizeof(*f));
-  if (f == NULL)
-  {
-    return NULL;
-  }
-  if (f_open(&f->fil, path, FA_READ) != FR_OK)
-  {
-    lv_free(f);
-    return NULL;
-  }
-
-  /* Cluster link map: on FR_NOT_ENOUGH_CORE FatFs stores the size it needs in [0] */
+  lv_free(f->linkmap);
   f->linkmap = lv_malloc(LINKMAP_INITIAL * sizeof(DWORD));
   if (f->linkmap != NULL && !fatfs_enable_fast_seek(&f->fil, f->linkmap, LINKMAP_INITIAL))
   {
@@ -66,6 +58,47 @@ static void *fs_open(lv_fs_drv_t *drv, const char *path, lv_fs_mode_t mode)
       f->linkmap = NULL;
     }
   }
+}
+
+/* Open the file again at @p pos (after the card was taken out and put back) */
+static bool reopen(sd_file_t *f, FSIZE_t pos)
+{
+  (void)f_close(&f->fil);
+  if (f_open(&f->fil, f->path, FA_READ) != FR_OK)
+  {
+    return false;
+  }
+  setup_fast_seek(f);
+  return f_lseek(&f->fil, pos) == FR_OK;
+}
+
+static void *fs_open(lv_fs_drv_t *drv, const char *path, lv_fs_mode_t mode)
+{
+  (void)drv;
+  if (mode != LV_FS_MODE_RD)
+  {
+    return NULL;   /* the card is read-only */
+  }
+
+  sd_file_t *f = lv_malloc(sizeof(*f));
+  const size_t path_len = strlen(path) + 1U;
+  char *path_copy = lv_malloc(path_len);
+  if (f == NULL || path_copy == NULL)
+  {
+    lv_free(f);
+    lv_free(path_copy);
+    return NULL;
+  }
+  if (f_open(&f->fil, path, FA_READ) != FR_OK)
+  {
+    lv_free(f);
+    lv_free(path_copy);
+    return NULL;
+  }
+  memcpy(path_copy, path, path_len);
+  f->path    = path_copy;
+  f->linkmap = NULL;
+  setup_fast_seek(f);
   return f;
 }
 
@@ -75,6 +108,7 @@ static lv_fs_res_t fs_close(lv_fs_drv_t *drv, void *file_p)
   sd_file_t *f = file_p;
   f_close(&f->fil);
   lv_free(f->linkmap);
+  lv_free(f->path);
   lv_free(f);
   return LV_FS_RES_OK;
 }
@@ -82,8 +116,14 @@ static lv_fs_res_t fs_close(lv_fs_drv_t *drv, void *file_p)
 static lv_fs_res_t fs_read(lv_fs_drv_t *drv, void *file_p, void *buf, uint32_t btr, uint32_t *br)
 {
   (void)drv;
+  sd_file_t *f = file_p;
+  const FSIZE_t pos = f_tell(&f->fil);
   UINT got = 0;
-  const FRESULT res = f_read(&((sd_file_t *)file_p)->fil, buf, btr, &got);
+  FRESULT res = f_read(&f->fil, buf, btr, &got);
+  if (res != FR_OK && reopen(f, pos))
+  {
+    res = f_read(&f->fil, buf, btr, &got);
+  }
   *br = got;
   return (res == FR_OK) ? LV_FS_RES_OK : LV_FS_RES_UNKNOWN;
 }
@@ -91,16 +131,20 @@ static lv_fs_res_t fs_read(lv_fs_drv_t *drv, void *file_p, void *buf, uint32_t b
 static lv_fs_res_t fs_seek(lv_fs_drv_t *drv, void *file_p, uint32_t pos, lv_fs_whence_t whence)
 {
   (void)drv;
-  FIL *fil = &((sd_file_t *)file_p)->fil;
+  sd_file_t *f = file_p;
   FSIZE_t target;
 
   switch (whence)
   {
-    case LV_FS_SEEK_CUR: target = f_tell(fil) + pos; break;
-    case LV_FS_SEEK_END: target = f_size(fil) + pos; break;
-    default:             target = pos;               break;
+    case LV_FS_SEEK_CUR: target = f_tell(&f->fil) + pos; break;
+    case LV_FS_SEEK_END: target = f_size(&f->fil) + pos; break;
+    default:             target = pos;                   break;
   }
-  return (f_lseek(fil, target) == FR_OK) ? LV_FS_RES_OK : LV_FS_RES_UNKNOWN;
+  if (f_lseek(&f->fil, target) == FR_OK || reopen(f, target))
+  {
+    return LV_FS_RES_OK;
+  }
+  return LV_FS_RES_UNKNOWN;
 }
 
 static lv_fs_res_t fs_tell(lv_fs_drv_t *drv, void *file_p, uint32_t *pos_p)
