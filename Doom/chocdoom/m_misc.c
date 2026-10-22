@@ -178,7 +178,7 @@ boolean M_WriteFile(char *name, void *source, int length)
 boolean M_WriteFile(char *name, void *source, int length)
 {
 	FIL file;
-	unsigned long c;
+	UINT c;
 
 	if (f_open (&file, name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
 	{
@@ -238,7 +238,7 @@ int M_ReadFile(char *name, byte **buffer)
 	FIL file;
 	int length;
 	byte		*buf;
-	unsigned long read;
+	UINT read;
 
 	if (f_open (&file, name, FA_OPEN_EXISTING | FA_READ) != FR_OK)
 	{

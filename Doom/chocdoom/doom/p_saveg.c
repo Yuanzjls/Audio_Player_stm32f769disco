@@ -83,7 +83,7 @@ char *P_SaveGameFile(int slot)
 static byte saveg_read8(void)
 {
     byte result;
-    unsigned long count;
+    UINT count;
 
     if (f_read (&save_stream, &result, 1, &count) != FR_OK)
     {
@@ -101,7 +101,7 @@ static byte saveg_read8(void)
 
 static void saveg_write8(byte value)
 {
-	unsigned long count;
+	UINT count;
 
 	if (f_write (&save_stream, &value, 1, &count) != FR_OK)
     {

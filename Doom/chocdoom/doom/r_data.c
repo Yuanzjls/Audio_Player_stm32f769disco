@@ -175,7 +175,7 @@ lighttable_t	*colormaps;
 //  will have new column_ts generated.
 //
 
-static inline mem_cpy(void *dst, const void *src, size_t sz)
+static inline void mem_cpy(void *dst, const void *src, size_t sz)
 {
    while(sz)
    {
