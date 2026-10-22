@@ -50,7 +50,7 @@
 #define configTICK_RATE_HZ						( 1000 )
 #define configMAX_PRIORITIES					( 5 )
 #define configMINIMAL_STACK_SIZE				( ( unsigned short ) 128 )
-#define configTOTAL_HEAP_SIZE					( ( size_t ) ( 200 * 1024 ) )
+#define configTOTAL_HEAP_SIZE					( ( size_t ) ( 120 * 1024 ) )   /* task stacks ~80 KB (all created at start-up), the rest small */
 #define configMAX_TASK_NAME_LEN					( 10 )
 #define configUSE_TRACE_FACILITY				1
 #define configTICK_TYPE_WIDTH_IN_BITS					TICK_TYPE_WIDTH_32_BITS

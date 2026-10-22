@@ -182,7 +182,7 @@ there is nothing to do:
 | Cover | The hardware JPEG codec, fed and drained by DMA; its interrupts wake the `cover` task, which averages the output into the 160 px cover and renders the blurred backdrop. |
 | Video | The same codec decodes each frame; the CPU converts its YCbCr output to RGB565 (two pixels per SIMD instruction) straight into the free frame buffer, which is shown on the next tearing-effect interrupt. LVGL does not draw meanwhile: the controls are rendered off screen and blended onto the frames. The audio DMA interrupt refills its buffer from the ring and counts what has played: that is the clock. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
-| Memory | The video player (3.6 MB of frame slots, audio ring and overlays) and the Files app (folder list and picture viewer, 1.8 MB) are never on screen together, so they share one SDRAM workspace (`workspace.c`): each takes it when it starts and gives it back when it is left. |
+| Memory | The video player (3.6 MB of frame slots, audio ring and overlays) and the Files app (folder list and picture viewer, 1.8 MB) are never on screen together, so they share one SDRAM workspace (`workspace.c`): each takes it when it starts and gives it back when it is left. Library names are packed into one pool. |
 | Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
 
 The status line measures the CPU load as the share of time not spent in that `WFI` (timed with TIM2).

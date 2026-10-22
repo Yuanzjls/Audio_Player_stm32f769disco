@@ -68,8 +68,8 @@ static FIL      s_file;
 static uint32_t s_in_left;               /* bytes of the picture not read yet */
 static layout_t s_layout;
 static cell_t   s_cells[SIZE * SIZE] __attribute__((section(".sdram"), aligned(4)));
-static uint16_t s_map_x[MAX_SIDE];
-static uint16_t s_map_y[MAX_SIDE];
+static uint16_t s_map_x[MAX_SIDE] __attribute__((section(".sdram")));   /* used once per cover: SDRAM */
+static uint16_t s_map_y[MAX_SIDE] __attribute__((section(".sdram")));
 
 /* Two images: one is shown while the other is decoded */
 static uint8_t        s_pixels[2][SIZE * SIZE * 3] __attribute__((section(".sdram"), aligned(4)));
@@ -77,7 +77,7 @@ static lv_image_dsc_t s_images[2];
 static uint16_t       s_backdrop_px[2][BACKDROP_W * BACKDROP_H] __attribute__((section(".sdram"), aligned(4)));
 static lv_image_dsc_t s_backdrops[2];
 static int32_t        s_tint[3];           /* colour the backdrop is washed with */
-static uint8_t        s_alpha[SIZE * SIZE];
+static uint8_t        s_alpha[SIZE * SIZE] __attribute__((section(".sdram")));
 static uint8_t        s_next;            /* image the next decode writes */
 
 /* Result of the latest request (task writes, GUI reads) */

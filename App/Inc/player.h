@@ -19,7 +19,8 @@ extern "C" {
 
 #define PLAYER_MUSIC_DIR   "/Music"
 #define PLAYER_TITLE_MAX   256   /* bytes, UTF-8, including terminator */
-#define PLAYER_MAX_TRACKS  4096  /* library size limit (names cached in SDRAM: 1 MB) */
+#define PLAYER_MAX_TRACKS  4096  /* library size limit */
+#define PLAYER_NAMES_POOL  (384U * 1024U)  /* their file names, packed (96 bytes each on average) */
 #define PLAYER_MESSAGE_MAX 64
 #define PLAYER_PATH_MAX    512   /* bytes, UTF-8, of a file path */
 

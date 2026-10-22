@@ -98,13 +98,16 @@ static char     s_file_request[PLAYER_PATH_MAX];   /* player_play_file(); guarde
 
 static uint16_t track_count(void);
 
-/* Library: file names of the playable tracks in directory order, and the
- * sorted order (indices into s_names: sorting moves 2 bytes per name, not 256).
- * Written once by the player task (scan_library) before track_count is
- * published, read-only after. NAME(i) is the i-th track in sorted order. */
-static char     s_names[PLAYER_MAX_TRACKS][PLAYER_TITLE_MAX] __attribute__((section(".sdram")));
+/* Library: file names of the playable tracks in directory order, one after the
+ * other in a pool (where each starts: s_name_at), and the sorted order (indices:
+ * sorting moves 2 bytes per name). Written once by the player task
+ * (scan_library) before track_count is published, read-only after.
+ * NAME(i) is the i-th track in sorted order. */
+static char     s_name_pool[PLAYER_NAMES_POOL] __attribute__((section(".sdram")));
+static uint32_t s_name_at[PLAYER_MAX_TRACKS] __attribute__((section(".sdram")));
 static uint16_t s_sorted[PLAYER_MAX_TRACKS] __attribute__((section(".sdram")));
-#define NAME(i) s_names[s_sorted[i]]
+#define NAME_AT(n) (&s_name_pool[s_name_at[n]])
+#define NAME(i)    NAME_AT(s_sorted[i])
 
 /* Shuffle: play order (a permutation of the track indices) and the position in
  * it of the current track. Player task only. */
@@ -162,15 +165,16 @@ static size_t base_name_len(const char *name)
 
 static int compare_names(const void *a, const void *b)
 {
-  return strcasecmp(s_names[*(const uint16_t *)a], s_names[*(const uint16_t *)b]);
+  return strcasecmp(NAME_AT(*(const uint16_t *)a), NAME_AT(*(const uint16_t *)b));
 }
 
-/* Read the music folder into s_names (sorted, case-insensitive). Returns the count. */
+/* Read the music folder into the name pool (sorted, case-insensitive). Returns the count. */
 static uint16_t scan_library(void)
 {
   DIR dir;
   FILINFO info;
   uint16_t count = 0;
+  uint32_t used = 0;     /* bytes of the name pool */
 
   if (f_opendir(&dir, PLAYER_MUSIC_DIR) != FR_OK)
   {
@@ -187,7 +191,15 @@ static uint16_t scan_library(void)
       LOG_WARN("player: more than %u tracks, the rest is ignored", (unsigned)PLAYER_MAX_TRACKS);
       break;
     }
-    snprintf(s_names[count], PLAYER_TITLE_MAX, "%s", info.fname);
+    const size_t len = strlen(info.fname) + 1U;
+    if (used + len > PLAYER_NAMES_POOL)
+    {
+      LOG_WARN("player: the names of more than %u tracks do not fit, the rest is ignored", (unsigned)count);
+      break;
+    }
+    memcpy(&s_name_pool[used], info.fname, len);
+    s_name_at[count] = used;
+    used += (uint32_t)len;
     s_sorted[count] = count;
     count++;
   }
@@ -271,7 +283,7 @@ static bool open_track(uint16_t index)
   {
     return false;
   }
-  snprintf(path, sizeof(path), "%s/%s", PLAYER_MUSIC_DIR, NAME(index));
+  snprintf(path, sizeof(path), "%s/%.*s", PLAYER_MUSIC_DIR, PLAYER_TITLE_MAX - 1, NAME(index));   /* names are shorter */
   return open_path(path, NAME(index), index, false);
 }
 
