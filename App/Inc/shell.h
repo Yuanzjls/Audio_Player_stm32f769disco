@@ -33,6 +33,7 @@ extern const app_t app_music;
 extern const app_t app_video;
 extern const app_t app_sysinfo;
 extern const app_t app_settings;
+extern const app_t app_files;
 
 /** Build the home screen and the apps, and show the home screen. */
 void shell_init(void);
@@ -56,6 +57,11 @@ const lv_font_t *shell_font_text(void);    /* 22 px */
 
 /** Cover of the current song (NULL: none); app_music.c. */
 const lv_image_dsc_t *app_music_cover(void);
+
+/** Open the Video app and play the .avi file at @p path (false: it cannot be
+ *  played). When the video is closed or ends, @p back_to is shown again (NULL:
+ *  the Video app's list). app_video.c. */
+bool app_video_play_file(const char *path, const app_t *back_to);
 
 #ifdef __cplusplus
 }

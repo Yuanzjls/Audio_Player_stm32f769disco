@@ -32,6 +32,7 @@
 #define BAR_H          96
 #define CTRL_HIDE_MS   4000     /* controls over a playing video go after this */
 #define CTRL_UPDATE_MS 1000     /* their time and seek bar move on this often */
+#define START_DELAY_MS 300      /* app_video_play_file: after the screen fade */
 
 /* Layer slots of the video player */
 #define LAYER_STATS    0
@@ -47,6 +48,7 @@ typedef struct
 static entry_t      s_entries[MAX_VIDEOS];
 static uint32_t     s_count;
 
+static lv_obj_t    *s_screen;
 static lv_obj_t    *s_list;           /* the file list (below the header) */
 static lv_obj_t    *s_empty;
 static lv_obj_t    *s_player;         /* full-screen: still frame + controls */
@@ -64,6 +66,7 @@ static lv_timer_t  *s_timer;
 
 static video_info_t s_info;
 static bool         s_open;           /* a video is open (the player view is up) */
+static const app_t *s_back_to;      /* app to return to when the video closes (NULL: the list) */
 static bool         s_playing;        /* frames are being shown (display video mode) */
 static bool         s_seeking;        /* the slider is being dragged */
 static bool         s_ctrl_shown;     /* the controls are up */
@@ -412,18 +415,17 @@ static void close_video(void)
   }
 }
 
-static void open_video(uint32_t index)
+/* Open a file and show the player view over the list; false if it cannot be played */
+static bool open_file(const char *path, const char *name)
 {
-  char path[sizeof(VIDEO_DIR) + NAME_LEN + 1];
-  snprintf(path, sizeof(path), VIDEO_DIR "/%s", s_entries[index].name);
   if (!video_open(path, &s_info))
   {
-    return;
+    return false;
   }
   player_release_audio();
   s_open = true;
 
-  lv_label_set_text(s_title, s_entries[index].name);
+  lv_label_set_text(s_title, name);
   lv_label_set_text_fmt(s_details, "%lu x %lu, %lu.%02lu fps, %s", (unsigned long)s_info.width,
                         (unsigned long)s_info.height, (unsigned long)(s_info.fps_x100 / 100U),
                         (unsigned long)(s_info.fps_x100 % 100U), s_info.audio);
@@ -435,7 +437,41 @@ static void open_video(uint32_t index)
   lv_obj_set_hidden(s_still, true);
   lv_obj_set_hidden(s_player, false);
   lv_obj_move_foreground(s_player);
-  start_playing();
+  return true;
+}
+
+static void open_video(uint32_t index)
+{
+  char path[sizeof(VIDEO_DIR) + NAME_LEN + 1];
+  snprintf(path, sizeof(path), VIDEO_DIR "/%s", s_entries[index].name);
+  if (open_file(path, s_entries[index].name))
+  {
+    start_playing();
+  }
+}
+
+/* Play once the screen has faded in: video mode freezes LVGL's drawing */
+static void on_start_timer(lv_timer_t *timer)
+{
+  (void)timer;
+  if (s_open && !s_playing && lv_screen_active() == s_screen)
+  {
+    start_playing();
+  }
+}
+
+bool app_video_play_file(const char *path, const app_t *back_to)
+{
+  const char *slash = strrchr(path, '/');
+  if (!open_file(path, slash != NULL ? slash + 1 : path))
+  {
+    return false;
+  }
+  shell_open(&app_video);
+  s_back_to = back_to;
+  lv_timer_t *timer = lv_timer_create(on_start_timer, START_DELAY_MS, NULL);
+  lv_timer_set_repeat_count(timer, 1);
+  return true;
 }
 
 /* A tap on the picture: controls on / off (paused, they stay) */
@@ -473,10 +509,22 @@ static void on_play_clicked(lv_event_t *e)
   }
 }
 
+/* Close the video: back to the list, or to the app that opened it */
+static void leave_video(void)
+{
+  const app_t *back_to = s_back_to;
+  s_back_to = NULL;
+  close_video();
+  if (back_to != NULL)
+  {
+    shell_open(back_to);
+  }
+}
+
 static void on_back_clicked(lv_event_t *e)
 {
   (void)e;
-  close_video();
+  leave_video();
 }
 
 static void on_stats_clicked(lv_event_t *e)
@@ -520,7 +568,7 @@ static void poll(lv_timer_t *timer)
   if (video_state() == VIDEO_ENDED)
   {
     log_stats("ended");
-    close_video();
+    leave_video();
     return;
   }
   if (s_ctrl_shown)
@@ -646,6 +694,7 @@ static void build_player(lv_obj_t *screen)
 
 static void video_create(lv_obj_t *screen)
 {
+  s_screen = screen;
   lv_obj_t *content = shell_app_header(screen, "Video");
 
   s_list = make_box(content, COLOR_BG, LV_OPA_COVER);
@@ -677,6 +726,7 @@ static void video_show(void)
 
 static void video_hide(void)
 {
+  s_back_to = NULL;
   close_video();
   lv_timer_pause(s_timer);
 }

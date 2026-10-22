@@ -12,12 +12,15 @@ user interface on FreeRTOS.
 
 ## Features
 
-* **Home screen with apps**: Music, Video, System info and Settings, plus a now-playing bar; the
+* **Home screen with apps**: Music, Video, Files, System info and Settings, plus a now-playing bar; the
   music keeps playing outside the Music app (a home button in every app leads back).
 * **Video player**: MJPEG AVI files with PCM (WAV) or MP3 sound, full screen at up to 800 x 480,
   30 fps (about 67 % CPU). Frames are timed by the audio clock, so picture and sound stay in sync;
   a frame that comes too late is dropped. A tap shows the controls over the playing video (pause,
   seek, back, home, an fps / decode time / CPU overlay).
+* **File explorer**: browse the folders of the SD card (name, size, date; item count and free
+  space). A tap plays a song of /Music or an .avi video in its app (Back returns to the folder),
+  or shows a file's details and, for text files, its first 8 KB.
 * **MP3 and WAV**, including variable-bitrate MP3, with title, artist and length from the ID3 tags.
 * **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,
   with a blurred copy of it behind the player.
@@ -133,7 +136,7 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_sysinfo`, `app_settings` |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
