@@ -357,7 +357,7 @@ boolean PIT_CheckThing (mobj_t* thing)
     // check for special pickup
     if (thing->flags & MF_SPECIAL)
     {
-	solid = thing->flags&MF_SOLID;
+	solid = (thing->flags & MF_SOLID) != 0;
 	if (tmflags&MF_PICKUP)
 	{
 	    // can remove thing
@@ -1351,8 +1351,8 @@ boolean PIT_ChangeSector (mobj_t*	thing)
 			  thing->y,
 			  thing->z + thing->height/2, MT_BLOOD);
 	
-	mo->momx = (P_Random() - P_Random ())<<12;
-	mo->momy = (P_Random() - P_Random ())<<12;
+	mo->momx = P_SubRandom() << 12;
+	mo->momy = P_SubRandom() << 12;
     }
 
     // keep checking (crush other things)	

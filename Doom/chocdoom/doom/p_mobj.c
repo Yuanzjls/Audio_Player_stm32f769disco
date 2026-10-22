@@ -784,7 +784,11 @@ void P_SpawnMapThing (mapthing_t* mthing)
     else if (gameskill == sk_nightmare)
 	bit = 4;
     else
-	bit = 1<<(gameskill-1);
+        // avoid undefined behavior (left shift by negative value and rhs too big)
+        // by accurately emulating what doom.exe did: reduce mod 32.
+        // For more details check:
+        // https://github.com/chocolate-doom/chocolate-doom/issues/1677
+        bit = (int) (1U << ((gameskill - 1) & 0x1F));
 
     if (!(mthing->options & bit) )
 	return;
@@ -855,7 +859,7 @@ P_SpawnPuff
 {
     mobj_t*	th;
 	
-    z += ((P_Random()-P_Random())<<10);
+    z += (P_SubRandom() << 10);
 
     th = P_SpawnMobj (x,y,z, MT_PUFF);
     th->momz = FRACUNIT;
@@ -883,7 +887,7 @@ P_SpawnBlood
 {
     mobj_t*	th;
 	
-    z += ((P_Random()-P_Random())<<10);
+    z += (P_SubRandom() << 10);
     th = P_SpawnMobj (x,y,z, MT_BLOOD);
     th->momz = FRACUNIT*2;
     th->tics -= P_Random()&3;
@@ -968,7 +972,7 @@ P_SpawnMissile
 
     // fuzzy player
     if (dest->flags & MF_SHADOW)
-	an += (P_Random()-P_Random())<<20;	
+	an += P_SubRandom() << 20;
 
     th->angle = an;
     an >>= ANGLETOFINESHIFT;

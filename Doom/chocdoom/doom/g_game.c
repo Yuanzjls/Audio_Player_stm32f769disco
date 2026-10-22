@@ -1141,28 +1141,27 @@ G_CheckSpot
 
     {
         fixed_t xa, ya;
-        signed int an;
 
-        an = (ANG45 * ((signed int) mthing->angle / 45));
-        // Right-shifting a negative signed integer is implementation-defined,
-        // so divide instead.
-        an /= 1 << ANGLETOFINESHIFT;
+        // This calculation overflows in Vanilla Doom, so use unsigned arithmetic
+        // for a defined wraparound. 'an' is then always within [0, 8191].
+        const uint32_t k = (uint32_t)((signed int) mthing->angle / 45);
+        const int an = (int)(((uint32_t)ANG45 * k) >> ANGLETOFINESHIFT);
 
         switch (an)
         {
-            case -4096:
+            case 4096:  // -4096:
                 xa = finetangent[2048];    // finecosine[-4096]
                 ya = finetangent[0];       // finesine[-4096]
                 break;
-            case -3072:
+            case 5120:  // -3072:
                 xa = finetangent[3072];    // finecosine[-3072]
                 ya = finetangent[1024];    // finesine[-3072]
                 break;
-            case -2048:
+            case 6144:  // -2048:
                 xa = finesine[0];          // finecosine[-2048]
                 ya = finetangent[2048];    // finesine[-2048]
                 break;
-            case -1024:
+            case 7168:  // -1024:
                 xa = finesine[1024];       // finecosine[-1024]
                 ya = finetangent[3072];    // finesine[-1024]
                 break;
@@ -1170,7 +1169,6 @@ G_CheckSpot
             case 1024:
             case 2048:
             case 3072:
-            case 4096:
                 xa = finecosine[an];
                 ya = finesine[an];
                 break;
@@ -1179,8 +1177,11 @@ G_CheckSpot
                 xa = ya = 0;
                 break;
         }
-        mo = P_SpawnMobj(x + 20 * xa, y + 20 * ya,
-                         ss->sector->floorheight, MT_TFOG);
+
+        // Vanilla Doom wraps around here (20 * finetangent[0] overflows).
+        mo = P_SpawnMobj((fixed_t)(x + 20 * (int64_t)xa),
+                         (fixed_t)(y + 20 * (int64_t)ya),
+                             ss->sector->floorheight, MT_TFOG);
     }
 
     if (players[consoleplayer].viewz != 1) 
