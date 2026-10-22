@@ -57,6 +57,10 @@ DSTATUS disk_status (
 
 	if (pdrv != DEV_MMC) return STA_NOINIT;
 
+	/* No card in the slot: FatFs mounts the volume again on the next access
+	 * once there is one */
+	if (BSP_SD_IsDetected() != SD_PRESENT) return STA_NOINIT | STA_NODISK;
+
 	stat = STA_NOINIT;
 	if(BSP_SD_GetCardState() == MSD_OK)
 	{
@@ -158,6 +162,10 @@ static DRESULT read_blocks_dma(BYTE *buff, LBA_t sector, UINT count)
 		LOG_WARN("sd: read of %u sector(s) at %lu failed after %lu ms (error 0x%lx)", count,
 		         (unsigned long)sector, (unsigned long)(xTaskGetTickCount() - start) * portTICK_PERIOD_MS,
 		         (unsigned long)s_sd_error);
+		if (BSP_SD_IsDetected() != SD_PRESENT)
+		{
+			break;    /* taken out: no point retrying */
+		}
 
 		if (attempt + 1U < SD_ATTEMPTS)
 		{
@@ -184,6 +192,8 @@ DRESULT disk_read (
 )
 {
 	if (pdrv != DEV_MMC) return RES_PARERR;
+	/* Card taken out: fail at once, not after the retries */
+	if (BSP_SD_IsDetected() != SD_PRESENT) return RES_NOTRDY;
 
 	if (is_dma_safe(buff, count))
 	{
@@ -270,6 +280,7 @@ DRESULT disk_write (
 )
 {
 	if (pdrv != DEV_MMC) return RES_PARERR;
+	if (BSP_SD_IsDetected() != SD_PRESENT) return RES_NOTRDY;
 
 	if (is_dma_safe(buff, count))
 	{

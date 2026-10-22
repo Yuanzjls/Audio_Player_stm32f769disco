@@ -31,6 +31,7 @@
 #include "ff.h"
 #include "log.h"
 #include "decoder.h"
+#include "stm32f769i_discovery_sd.h"
 
 #define TASK_STACK_WORDS   6144       /* the MP3 decoder needs ~16 KB of scratch on the stack */
 #define TASK_PRIORITY      3          /* above the GUI: audio must never starve */
@@ -51,6 +52,8 @@
 
 #define IDLE_POLL_MS       100
 #define CARD_RETRY_MS      1000
+#define CARD_DEBOUNCE_MS   300        /* the card-detect switch must settle */
+#define OPEN_SEARCH_MS     5000       /* longest search for a playable track */
 
 typedef enum
 {
@@ -287,14 +290,27 @@ static bool open_track(uint16_t index)
   return open_path(path, NAME(index), index, false);
 }
 
-/* Open @p index, or the next playable track after it (wrapping around). */
+static bool card_detected(void)
+{
+  return BSP_SD_IsDetected() == SD_PRESENT;
+}
+
+/* Open @p index, or the next playable track after it (wrapping around). Gives
+ * up when the card is taken out or after OPEN_SEARCH_MS: with a card that no
+ * longer reads, trying a large library track by track would take very long. */
 static bool open_playable_track(uint16_t index, uint16_t count)
 {
+  const TickType_t start = xTaskGetTickCount();
   for (uint16_t tries = 0; tries < count; tries++)
   {
     if (open_track((uint16_t)((index + tries) % count)))
     {
       return true;
+    }
+    if (!card_detected() || (xTaskGetTickCount() - start) >= pdMS_TO_TICKS(OPEN_SEARCH_MS))
+    {
+      LOG_WARN("player: no playable track found (%u tried)", (unsigned)tries + 1U);
+      break;
     }
   }
   return false;
@@ -795,21 +811,13 @@ static void send_command(command_type_t type, uint32_t value)
 
 /* ---- task ------------------------------------------------------------------ */
 
-/* Wait for a card and mount it (retrying every CARD_RETRY_MS). */
-static void mount_card(void)
+/* Mount the card once; false if there is none (or it cannot be read). */
+static bool try_mount(void)
 {
-  bool warned = false;
-
-  while (f_mount(&s_fs, "", 1) != FR_OK)
+  if (f_mount(&s_fs, "", 1) != FR_OK)
   {
-    set_state(PLAYER_STATE_NO_CARD, "Insert an SD card");
-    if (!warned)
-    {
-      LOG_WARN("player: SD card not mounted, retrying");
-      warned = true;
-    }
     f_unmount("");
-    vTaskDelay(pdMS_TO_TICKS(CARD_RETRY_MS));
+    return false;
   }
 
   static const char *const k_fs_names[] = { "?", "FAT12", "FAT16", "FAT32", "exFAT" };
@@ -817,6 +825,34 @@ static void mount_card(void)
   s_status.card_mb = (uint32_t)(((uint64_t)(s_fs.n_fatent - 2U) * s_fs.csize) / 2048U);
   snprintf(s_status.card_fs, sizeof(s_status.card_fs), "%s",
            k_fs_names[(s_fs.fs_type <= FS_EXFAT) ? s_fs.fs_type : 0]);
+  status_unlock();
+  return true;
+}
+
+/* Wait for a card and mount it (retrying every CARD_RETRY_MS). */
+static void mount_card(void)
+{
+  bool warned = false;
+
+  while (!try_mount())
+  {
+    set_state(PLAYER_STATE_NO_CARD, "Insert an SD card");
+    if (!warned)
+    {
+      LOG_WARN("player: SD card not mounted, retrying");
+      warned = true;
+    }
+    vTaskDelay(pdMS_TO_TICKS(CARD_RETRY_MS));
+  }
+}
+
+/* The saved settings decide the volume and whether to shuffle */
+static void apply_settings(void)
+{
+  const settings_t settings = settings_get();
+  status_lock();
+  s_status.volume  = settings.volume;
+  s_status.shuffle = settings.shuffle_on_start;
   status_unlock();
 }
 
@@ -842,6 +878,72 @@ static uint16_t load_library(void)
     set_state(PLAYER_STATE_NO_TRACKS, "No .wav or .mp3 files in /Music");
   }
   return count;
+}
+
+/* The card-detect switch, polled by the player task: when the card is taken
+ * out, stop and unmount it; when one is put in, mount it and read the library
+ * again (the first song loaded, not playing). */
+static void watch_card(void)
+{
+  static bool       mounted = true;     /* mount_card() comes first */
+  static bool       seen    = true;     /* last reading of the switch */
+  static TickType_t changed_at;
+  static TickType_t tried_at;
+  const TickType_t now = xTaskGetTickCount();
+  const bool present = card_detected();
+
+  if (present != seen)
+  {
+    seen = present;
+    changed_at = now;
+    return;
+  }
+  if ((now - changed_at) < pdMS_TO_TICKS(CARD_DEBOUNCE_MS))
+  {
+    return;
+  }
+
+  if (mounted && !present)
+  {
+    LOG_INFO("player: SD card taken out");
+    if (s_output_rate != 0U)
+    {
+      stop_output();               /* only if the output is the player's */
+    }
+    close_track();
+    f_unmount("");
+    mounted = false;
+    status_lock();
+    s_status.track_count = 0;
+    s_status.library_serial++;
+    s_status.card_mb = 0;
+    s_status.card_fs[0] = '\0';
+    s_status.from_file = false;
+    s_current_path[0] = '\0';
+    status_unlock();
+    set_state(PLAYER_STATE_NO_CARD, "Insert an SD card");
+  }
+  else if (!mounted && present && (now - tried_at) >= pdMS_TO_TICKS(CARD_RETRY_MS))
+  {
+    tried_at = now;
+    if (!try_mount())
+    {
+      return;                      /* again in CARD_RETRY_MS */
+    }
+    mounted = true;
+    LOG_INFO("player: SD card put in");
+    if (!settings_loaded())
+    {
+      settings_load();
+      apply_settings();
+    }
+    const uint16_t count = load_library();
+    const uint16_t first = (shuffle_enabled() && count > 0U) ? (uint16_t)random_below(count) : 0U;
+    if (count > 0U && open_playable_track(first, count) && shuffle_enabled())
+    {
+      shuffle_order(track_index());
+    }
+  }
 }
 
 /* Block until the GUI has drawn its first frame (or the timeout expires).
@@ -877,12 +979,8 @@ static void player_task(void *arg)
   /* The saved settings decide the volume and whether to start in shuffle mode
    * (loaded with the card, songs or not) */
   settings_load();
+  apply_settings();
   const uint16_t count = load_library();
-  const settings_t settings = settings_get();
-  status_lock();
-  s_status.volume  = settings.volume;
-  s_status.shuffle = settings.shuffle_on_start;
-  status_unlock();
 
   wait_for_ui();
 
@@ -937,6 +1035,8 @@ static void player_task(void *arg)
         LOG_INFO("player: exact length %lu s", (unsigned long)duration_s);
       }
     }
+
+    watch_card();
 
     command_t cmd;
     while (xQueueReceive(s_cmd_queue, &cmd, 0) == pdTRUE)
