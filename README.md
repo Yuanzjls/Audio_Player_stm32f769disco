@@ -20,7 +20,12 @@ user interface on FreeRTOS.
   seek, back, home, an fps / decode time / CPU overlay).
 * **File explorer**: browse the folders of the SD card (name, size, date; item count and free
   space). A tap plays a song (from any folder) or an .avi video in its app (Back returns to the folder),
-  or shows a file's details and, for text files, its first 8 KB.
+  shows a picture, or shows a file's details and, for text files, its first 8 KB.
+* **Picture viewer**: JPEG (hardware codec, turned by its EXIF orientation), PNG (all colour
+  types, interlaced, transparency), BMP and animated GIF; swipe for the previous or next picture.
+  Large pictures (up to 8192 x 8192 JPEG, 16384 x 16384 PNG / BMP) are shrunk while they are
+  decoded, averaging the pixels, so they need little memory; the PNG filters and the JPEG
+  averaging use the Cortex-M7's SIMD instructions. Progressive JPEG is not supported.
 * **MP3 and WAV**, including variable-bitrate MP3, with title, artist and length from the ID3 tags.
 * **Album covers**: the picture embedded in the song, decoded by the chip's hardware JPEG codec,
   with a blurred copy of it behind the player.
@@ -137,7 +142,7 @@ GitHub Actions runs them on every push, with the sanitizers, next to the firmwar
 
 | Folder | Contents |
 |---|---|
-| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `image_decode` (PNG, BMP), `image_scale` (shrinking while decoding), `inflate` (streaming DEFLATE), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
+| `App/` | `player` (library + streaming task, command queue), `decoder` (format-independent decoding: `decoder_wav`, `decoder_mp3`, `id3`), `spectrum` (FFT band levels with CMSIS-DSP), `cover_art` (cover pictures), `jpeg_hw` (the hardware JPEG codec, shared), `settings` (settings.txt), `workspace` (SDRAM shared by the video player and the Files app), `picture` (picture viewer decoding task, JPEG), `image_decode` (PNG, BMP), `image_scale` (shrinking while decoding), `inflate` (streaming DEFLATE), `avi` (AVI parser), `yuv2rgb` (YCbCr to RGB565, SIMD), `video_player` (reader and render tasks, A/V sync, layers over the video); LVGL screens: `shell` (home screen, app switching), `app_music`, `app_video`, `app_files`, `app_sysinfo`, `app_settings` |
 | `Board/` | `audio_out` (SAI1 + WM8994), `display` (DSI/LTDC/OTM8009A as LVGL display), `touch` (FT6x06), `lv_fs_sd` (LVGL file access with FatFs fast seek), `i2c_bus` (lock for the shared codec/touch I2C), `log` (UART), `sysmon` (CPU load, heap use) |
 | `Core/` | start-up (`main.c`: MPU, caches, clocks, tasks), interrupt handlers, HAL/FreeRTOS/LVGL configuration |
 | `Middlewares/` | LVGL, the FreeRTOS kernel, minimp3 and CMSIS-DSP (submodules) |
@@ -177,7 +182,7 @@ there is nothing to do:
 | Cover | The hardware JPEG codec, fed and drained by DMA; its interrupts wake the `cover` task, which averages the output into the 160 px cover and renders the blurred backdrop. |
 | Video | The same codec decodes each frame; the CPU converts its YCbCr output to RGB565 (two pixels per SIMD instruction) straight into the free frame buffer, which is shown on the next tearing-effect interrupt. LVGL does not draw meanwhile: the controls are rendered off screen and blended onto the frames. The audio DMA interrupt refills its buffer from the ring and counts what has played: that is the clock. |
 | Touch | The FT6x06 INT line (EXTI) wakes the `gui` task; I2C is only read while a finger is down. |
-| Memory | The video player (3.6 MB of frame slots, audio ring and overlays) and the Files app (folder list) are never on screen together, so they share one SDRAM workspace (`workspace.c`): each takes it when it starts and gives it back when it is left. |
+| Memory | The video player (3.6 MB of frame slots, audio ring and overlays) and the Files app (folder list and picture viewer, 1.8 MB) are never on screen together, so they share one SDRAM workspace (`workspace.c`): each takes it when it starts and gives it back when it is left. |
 | Delays | `HAL_Delay()` sleeps the calling task instead of busy-waiting. |
 
 The status line measures the CPU load as the share of time not spent in that `WFI` (timed with TIM2).

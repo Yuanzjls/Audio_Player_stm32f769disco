@@ -5,8 +5,9 @@
  * Folders come first, then files, each sorted by name (hidden and system
  * entries are left out). A tap on a folder opens it; on a song (any folder)
  * it plays the song in the Music app; on an .avi file it plays the video in the
- * Video app; on any other file it shows its details and, for text files, the
- * beginning of the text.
+ * Video app; on a picture (JPEG, PNG, GIF, BMP) it shows it, with swipes to the
+ * previous and next ones; on any other file it shows its details and, for text
+ * files, the beginning of the text.
  *
  * The list is virtualized like the music library: a pool of row widgets is
  * re-labelled while scrolling, so only visible names are measured and drawn.
@@ -18,6 +19,8 @@
 
 #include "decoder.h"
 #include "ff.h"
+#include "image_decode.h"
+#include "picture.h"
 #include "player.h"
 #include "shell.h"
 #include "theme.h"
@@ -45,8 +48,8 @@ typedef struct
 
 typedef enum { KIND_DIR, KIND_AUDIO, KIND_VIDEO, KIND_IMAGE, KIND_TEXT, KIND_OTHER } kind_t;
 
-/* The folder list is in the workspace while the app is on screen
- * (files_acquire); the text viewer's buffer is small */
+/* The folder list and the picture viewer's memory are in the workspace while
+ * the app is on screen (files_acquire); the text viewer's buffer is small */
 static entry_t  *s_entries;           /* MAX_ENTRIES */
 static uint16_t *s_order;             /* MAX_ENTRIES, sorted */
 static char     s_text[TEXT_MAX + 1] __attribute__((section(".sdram")));
@@ -71,6 +74,19 @@ static lv_obj_t *s_viewer_title;
 static lv_obj_t *s_viewer_details;
 static lv_obj_t *s_viewer_body;
 static lv_obj_t *s_viewer_text;
+
+/* Picture viewer */
+static lv_obj_t   *s_pic;
+static lv_obj_t   *s_pic_title;
+static lv_obj_t   *s_pic_details;
+static lv_obj_t   *s_pic_prev;
+static lv_obj_t   *s_pic_next;
+static lv_obj_t   *s_pic_area;
+static lv_obj_t   *s_pic_image;
+static lv_obj_t   *s_pic_status;
+static lv_obj_t   *s_pic_gif;       /* an animated GIF, while one is shown */
+static lv_timer_t *s_pic_timer;
+static int32_t     s_pic_index;     /* list index of the picture shown */
 
 /* ---- helpers --------------------------------------------------------------- */
 
@@ -136,7 +152,7 @@ static bool has_ext(const char *name, const char *const *exts)
 
 static kind_t kind_of(const entry_t *e)
 {
-  static const char *const images[] = { "jpg", "jpeg", "png", "bmp", "gif", NULL };
+  static const char *const images[] = { "jpg", "jpeg", "jfif", "png", "bmp", "gif", NULL };
   static const char *const texts[]  = { "txt", "log", "ini", "cfg", "conf", "json", "csv", "md", "lrc",
                                         "xml", "htm", "html", NULL };
   static const char *const videos[] = { "avi", NULL };
@@ -568,6 +584,239 @@ static void on_viewer_back(lv_event_t *e)
   close_viewer();
 }
 
+/* ---- picture viewer -------------------------------------------------------- */
+
+static bool is_gif(const char *name)
+{
+  static const char *const gif[] = { "gif", NULL };
+  return has_ext(name, gif);
+}
+
+/* Next picture in the folder from list index @p from in direction @p dir; -1: none */
+static int32_t find_picture(int32_t from, int32_t dir)
+{
+  for (int32_t i = from + dir; i >= 0 && i < (int32_t)s_count; i += dir)
+  {
+    if (kind_of(&s_entries[s_order[i]]) == KIND_IMAGE)
+    {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static void pic_details(const entry_t *e, uint32_t w, uint32_t h)
+{
+  char size[24];
+  char date[24];
+  format_size(size, sizeof(size), e->size);
+  format_date(date, sizeof(date), e->date, e->time);
+  if (w != 0U && h != 0U)
+  {
+    lv_label_set_text_fmt(s_pic_details, "%lu x %lu, %s, %s", (unsigned long)w, (unsigned long)h, size, date);
+  }
+  else
+  {
+    lv_label_set_text_fmt(s_pic_details, "%s, %s", size, date);
+  }
+}
+
+/* A message over the picture area: in the middle, or at the bottom over a picture */
+static void pic_status(const char *text, bool over_picture)
+{
+  lv_label_set_text(s_pic_status, text != NULL ? text : "");
+  lv_obj_align(s_pic_status, over_picture ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_CENTER, 0, over_picture ? -16 : 0);
+  lv_obj_set_hidden(s_pic_status, text == NULL);
+}
+
+static void remove_gif(void)
+{
+  if (s_pic_gif != NULL)
+  {
+    lv_obj_delete(s_pic_gif);   /* frees its frame buffer */
+    s_pic_gif = NULL;
+  }
+}
+
+/* Size of a GIF from its header. Not lv_gif_get_size(): that puts a whole
+ * decoder (about 26 KB) on the stack, more than the GUI task has. */
+static bool gif_size(const char *path, uint32_t *w, uint32_t *h)
+{
+  FIL f;
+  uint8_t head[10];
+  UINT got = 0;
+  if (f_open(&f, path, FA_READ) != FR_OK)
+  {
+    return false;
+  }
+  const bool ok = f_read(&f, head, sizeof(head), &got) == FR_OK && got == sizeof(head) &&
+                  image_kind(head, got) == IMAGE_KIND_GIF;
+  f_close(&f);
+  *w = (uint32_t)head[6] | ((uint32_t)head[7] << 8);
+  *h = (uint32_t)head[8] | ((uint32_t)head[9] << 8);
+  return ok && *w != 0U && *h != 0U;
+}
+
+/* Animated GIFs play in LVGL's GIF widget, whose frame buffer (the GIF's full
+ * size) comes from LVGL's memory: with transparency if it fits, else RGB565 */
+static void show_gif(const char *path, const entry_t *e)
+{
+  static char lv_path[PATH_MAX_LEN + 2];   /* the widget keeps the pointer */
+  snprintf(lv_path, sizeof(lv_path), "S:%s", path);
+
+  uint32_t w = 0, h = 0;
+  if (!gif_size(path, &w, &h))
+  {
+    pic_status("This GIF file cannot be read.", false);
+    return;
+  }
+  pic_details(e, w, h);
+
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+  const size_t spare = 256U * 1024U;       /* for the rest of the GUI */
+  const size_t px = (size_t)w * h;
+  lv_color_format_t cf;
+  if (px * 4U + spare < mon.free_biggest_size)
+  {
+    cf = LV_COLOR_FORMAT_ARGB8888;
+  }
+  else if (px * 2U + spare < mon.free_biggest_size)
+  {
+    cf = LV_COLOR_FORMAT_RGB565;
+  }
+  else
+  {
+    pic_status("This GIF is too large to show.", false);
+    return;
+  }
+  if (w > LV_GIF_MAX_WIDTH)
+  {
+    pic_status("This GIF is too wide to show.", false);
+    return;
+  }
+
+  s_pic_gif = lv_gif_create(s_pic_area);
+  lv_gif_set_color_format(s_pic_gif, cf);
+  lv_gif_set_src(s_pic_gif, lv_path);
+  if (!lv_gif_is_loaded(s_pic_gif))
+  {
+    remove_gif();
+    pic_status("This GIF file cannot be read.", false);
+    return;
+  }
+  /* Shrunk to fit (drawn scaled, frame by frame) */
+  const uint32_t sx = (uint32_t)PICTURE_MAX_W * LV_SCALE_NONE / w;
+  const uint32_t sy = (uint32_t)PICTURE_MAX_H * LV_SCALE_NONE / h;
+  uint32_t scale = (sx < sy) ? sx : sy;
+  if (scale < LV_SCALE_NONE)
+  {
+    lv_image_set_scale(s_pic_gif, scale);
+  }
+  lv_obj_center(s_pic_gif);
+  pic_status(NULL, false);
+}
+
+static void show_picture(int32_t index)
+{
+  const entry_t *e = &s_entries[s_order[index]];
+  char path[PATH_MAX_LEN];
+  if (!join_path(path, sizeof(path), s_path, e->name))
+  {
+    toast("The path is too long.");
+    return;
+  }
+  s_pic_index = index;
+
+  /* The old picture goes before its pixels are overwritten */
+  remove_gif();
+  lv_obj_set_hidden(s_pic_image, true);
+  lv_image_set_src(s_pic_image, NULL);
+  lv_timer_pause(s_pic_timer);
+
+  lv_label_set_text(s_pic_title, e->name);
+  pic_details(e, 0, 0);
+  lv_obj_set_state(s_pic_prev, LV_STATE_DISABLED, find_picture(index, -1) < 0);
+  lv_obj_set_state(s_pic_next, LV_STATE_DISABLED, find_picture(index, 1) < 0);
+  lv_obj_set_hidden(s_pic, false);
+  lv_obj_move_foreground(s_pic);
+
+  if (is_gif(e->name))
+  {
+    picture_cancel();
+    show_gif(path, e);
+    return;
+  }
+  pic_status("Loading...", false);
+  picture_request(path);
+  lv_timer_resume(s_pic_timer);
+}
+
+static void on_pic_timer(lv_timer_t *timer)
+{
+  const picture_result_t r = picture_poll();
+  if (r.state == PICTURE_PENDING)
+  {
+    return;
+  }
+  lv_timer_pause(timer);
+  if (r.state == PICTURE_IDLE)
+  {
+    return;
+  }
+  pic_details(&s_entries[s_order[s_pic_index]], r.width, r.height);
+  if (r.image != NULL)
+  {
+    lv_image_set_src(s_pic_image, r.image);
+    lv_obj_center(s_pic_image);
+    lv_obj_set_hidden(s_pic_image, false);
+  }
+  pic_status(r.state == PICTURE_FAILED ? r.message : NULL, r.image != NULL);
+}
+
+static void close_picture(void)
+{
+  picture_cancel();
+  lv_timer_pause(s_pic_timer);
+  remove_gif();
+  lv_obj_set_hidden(s_pic_image, true);
+  lv_image_set_src(s_pic_image, NULL);
+  lv_obj_set_hidden(s_pic, true);
+}
+
+static void on_pic_back(lv_event_t *e)
+{
+  (void)e;
+  close_picture();
+}
+
+static void step_picture(int32_t dir)
+{
+  const int32_t i = find_picture(s_pic_index, dir);
+  if (i >= 0)
+  {
+    show_picture(i);
+  }
+}
+
+static void on_pic_prev(lv_event_t *e) { (void)e; step_picture(-1); }
+static void on_pic_next(lv_event_t *e) { (void)e; step_picture(1); }
+
+/* Swipe left: next picture, right: previous one */
+static void on_pic_gesture(lv_event_t *e)
+{
+  (void)e;
+  const lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+  if (dir == LV_DIR_LEFT)
+  {
+    step_picture(1);
+  }
+  else if (dir == LV_DIR_RIGHT)
+  {
+    step_picture(-1);
+  }
+}
+
 /* ---- opening --------------------------------------------------------------- */
 
 /* Library index of the song at @p path, -1 if it is not in the library */
@@ -633,6 +882,10 @@ static void open_entry(int32_t index)
       }
       return;
 
+    case KIND_IMAGE:
+      show_picture(index);
+      return;
+
     default:
       break;
   }
@@ -682,6 +935,50 @@ static void build_viewer(lv_obj_t *screen)
   s_viewer_text = make_label(s_viewer_body, &lv_font_montserrat_20, COLOR_TEXT);
   lv_label_set_long_mode(s_viewer_text, LV_LABEL_LONG_MODE_WRAP);
   lv_obj_set_width(s_viewer_text, lv_pct(100));
+}
+
+/* Picture page: back, name and size, previous / next; the picture below */
+static void build_picture_viewer(lv_obj_t *screen)
+{
+  s_pic = make_box(screen, COLOR_BG);
+  lv_obj_set_size(s_pic, 800, 480);
+  lv_obj_set_hidden(s_pic, true);
+
+  lv_obj_t *back = make_icon_button(s_pic, LV_SYMBOL_LEFT, on_pic_back);
+  lv_obj_set_pos(back, 18, 12);
+
+  s_pic_next = make_icon_button(s_pic, LV_SYMBOL_RIGHT, on_pic_next);
+  lv_obj_set_pos(s_pic_next, 800 - 18 - 44, 12);
+  s_pic_prev = make_icon_button(s_pic, LV_SYMBOL_LEFT, on_pic_prev);
+  lv_obj_set_pos(s_pic_prev, 800 - 18 - 44 - 56, 12);
+
+  s_pic_title = make_label(s_pic, shell_font_text(), COLOR_TEXT);
+  lv_label_set_long_mode(s_pic_title, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_width(s_pic_title, 800 - 76 - 140);
+  one_line(s_pic_title);
+  lv_obj_set_pos(s_pic_title, 76, 6);
+
+  s_pic_details = make_label(s_pic, &lv_font_montserrat_14, COLOR_TEXT_DIM);
+  lv_obj_set_pos(s_pic_details, 76, 38);
+
+  s_pic_area = make_box(s_pic, COLOR_BG);
+  lv_obj_set_size(s_pic_area, PICTURE_MAX_W, PICTURE_MAX_H);
+  lv_obj_set_pos(s_pic_area, 0, 480 - PICTURE_MAX_H);
+  lv_obj_set_gesture_bubble(s_pic_area, false);   /* swipes are for it, not its parents */
+  lv_obj_add_event_cb(s_pic_area, on_pic_gesture, LV_EVENT_GESTURE, NULL);
+
+  s_pic_image = lv_image_create(s_pic_area);
+  lv_obj_set_hidden(s_pic_image, true);
+
+  s_pic_status = make_label(s_pic_area, &lv_font_montserrat_20, COLOR_TEXT_DIM);
+  lv_obj_set_style_bg_color(s_pic_status, COLOR_BG, 0);
+  lv_obj_set_style_bg_opa(s_pic_status, LV_OPA_80, 0);
+  lv_obj_set_style_pad_all(s_pic_status, 8, 0);
+  lv_obj_set_style_radius(s_pic_status, 8, 0);
+  lv_obj_set_hidden(s_pic_status, true);
+
+  s_pic_timer = lv_timer_create(on_pic_timer, 50, NULL);
+  lv_timer_pause(s_pic_timer);
 }
 
 static void files_create(lv_obj_t *screen)
@@ -768,9 +1065,11 @@ static void files_create(lv_obj_t *screen)
   lv_timer_pause(s_toast_timer);
 
   build_viewer(screen);
+  build_picture_viewer(screen);
+  picture_init();
 }
 
-/* Take the workspace for the folder list */
+/* Take the workspace: folder list and the picture viewer's memory */
 static bool files_acquire(void)
 {
   if (!workspace_take(WORKSPACE_FILES))
@@ -779,13 +1078,15 @@ static bool files_acquire(void)
   }
   s_entries = workspace_alloc(WORKSPACE_FILES, MAX_ENTRIES * sizeof(entry_t));
   s_order   = workspace_alloc(WORKSPACE_FILES, MAX_ENTRIES * sizeof(uint16_t));
-  if (s_entries == NULL || s_order == NULL)
+  void *picture = workspace_alloc(WORKSPACE_FILES, picture_mem_size());
+  if (s_entries == NULL || s_order == NULL || picture == NULL)
   {
     s_entries = NULL;
     s_order   = NULL;
     workspace_give(WORKSPACE_FILES);
     return false;
   }
+  picture_attach(picture);
   return true;
 }
 
@@ -793,6 +1094,8 @@ static bool files_acquire(void)
 static void files_release(void)
 {
   close_viewer();
+  close_picture();
+  picture_detach();
   s_count = 0;
   for (uint32_t k = 0; k < POOL; k++)
   {
@@ -834,6 +1137,8 @@ static void files_fonts_changed(void)
   lv_obj_set_y(s_path_label, (BAR_H - lv_obj_get_height(s_path_label)) / 2);
   lv_obj_set_style_text_font(s_viewer_title, shell_font_text(), 0);
   one_line(s_viewer_title);
+  lv_obj_set_style_text_font(s_pic_title, shell_font_text(), 0);
+  one_line(s_pic_title);
   for (uint32_t k = 0; k < POOL; k++)
   {
     lv_obj_t *name = lv_obj_get_child(s_rows[k], 1);
