@@ -139,7 +139,7 @@ static buf_t s_png, s_raw;
 
 static void put8(buf_t *b, uint32_t v)  { b->data[b->len++] = (uint8_t)v; }
 static void put32(buf_t *b, uint32_t v) { put8(b, v >> 24); put8(b, v >> 16); put8(b, v >> 8); put8(b, v); }
-static void put_bytes(buf_t *b, const void *d, size_t n) { memcpy(&b->data[b->len], d, n); b->len += n; }
+static void put_bytes(buf_t *b, const void *d, size_t n) { if (n != 0U) { memcpy(&b->data[b->len], d, n); b->len += n; } }   /* d may be NULL when n is 0 */
 
 static void chunk(buf_t *b, const char *type, const uint8_t *d, size_t n)
 {
