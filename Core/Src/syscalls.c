@@ -50,6 +50,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/times.h>
 #include <main.h>
 
 #include "log.h"
