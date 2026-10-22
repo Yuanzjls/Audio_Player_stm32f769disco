@@ -122,16 +122,14 @@ target_compile_options(cmsis_dsp PRIVATE -O2 -w)
 # Optimised in Debug builds too: it is a game.
 # ---------------------------------------------------------------------------
 if(WITH_DOOM)
-  file(GLOB DOOM_ENGINE_SOURCES CONFIGURE_DEPENDS "Doom/chocdoom/*.c" "Doom/chocdoom/doom/*.c")
+  file(GLOB DOOM_ENGINE_SOURCES CONFIGURE_DEPENDS "Doom/chocdoom/*.c" "Doom/chocdoom/doom/*.c" "Doom/chocdoom/opl/*.c")
   file(GLOB DOOM_PORT_SOURCES CONFIGURE_DEPENDS "Doom/port/*.c")
-  # The OPL music player (Chocolate Doom 2.2.1): not built yet
-  list(FILTER DOOM_ENGINE_SOURCES EXCLUDE REGEX "/(i_oplmusic|midifile|mus2mid)\.c$")
   add_library(doom STATIC ${DOOM_ENGINE_SOURCES} ${DOOM_PORT_SOURCES})
   target_include_directories(doom
     PUBLIC  Doom/port
-    PRIVATE Doom/chocdoom Doom/chocdoom/doom Board/Inc App/Inc
+    PRIVATE Doom/chocdoom Doom/chocdoom/doom Doom/chocdoom/opl Board/Inc App/Inc
   )
-  target_link_libraries(doom PRIVATE board_config)
+  target_link_libraries(doom PRIVATE board_config INTERFACE m)   # the OPL emulator builds its tables with libm
   target_compile_options(doom PRIVATE -O2 -include ${CMAKE_CURRENT_SOURCE_DIR}/Doom/port/doom_libc.h)
   # Third-party engine: no warnings; the port: ours
   set_source_files_properties(${DOOM_ENGINE_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")

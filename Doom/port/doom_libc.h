@@ -23,6 +23,7 @@ doom_file_t *doom_fopen(const char *path, const char *mode);
 int          doom_fclose(doom_file_t *f);
 size_t       doom_fread(void *buf, size_t size, size_t count, doom_file_t *f);
 size_t       doom_fwrite(const void *buf, size_t size, size_t count, doom_file_t *f);
+int          doom_fgetc(doom_file_t *f);
 int          doom_fseek(doom_file_t *f, long offset, int whence);
 long         doom_ftell(doom_file_t *f);
 int          doom_feof(doom_file_t *f);
@@ -55,12 +56,14 @@ void  doom_exit(int status) __attribute__((noreturn));
 
 #undef putchar
 #undef feof
+#undef fgetc
 #undef puts
 #define FILE         doom_file_t
 #define fopen        doom_fopen
 #define fclose       doom_fclose
 #define fread        doom_fread
 #define fwrite       doom_fwrite
+#define fgetc        doom_fgetc
 #define fseek        doom_fseek
 #define ftell        doom_ftell
 #define feof         doom_feof

@@ -49,6 +49,10 @@
 
 #define SYS_LITTLE_ENDIAN
 
+// Big-endian values (MIDI files), as SDL_endian.h provides them
+#define SDL_SwapBE16(x) __builtin_bswap16(x)
+#define SDL_SwapBE32(x) __builtin_bswap32(x)
+
 #endif
 #endif
 

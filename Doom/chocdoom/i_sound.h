@@ -235,6 +235,15 @@ extern int snd_maxslicetime_ms;
 extern char *snd_musiccmd;
 extern int snd_pitchshift;
 
+// DMX version to emulate for OPL emulation (from Chocolate Doom 2.2.1,
+// with i_oplmusic.c):
+typedef enum {
+    opl_v_old,   // Hexen, Heretic
+    opl_v_new    // Doom, Strife
+} opl_driver_ver_t;
+
+void I_SetOPLDriverVer(opl_driver_ver_t ver);
+
 void I_BindSoundVariables(void);
 
 #endif

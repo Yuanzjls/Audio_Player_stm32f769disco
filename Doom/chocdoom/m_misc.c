@@ -36,6 +36,7 @@
 #include <sys/types.h>
 #endif
 
+#include "config.h"
 #include "doomtype.h"
 
 #include "deh_str.h"
@@ -273,10 +274,15 @@ char *M_TempFile(char *s)
     {
         tempdir = ".";
     }
-#else
+#elif defined(ORIGCODE)
     // In Unix, just use /tmp.
 
     tempdir = "/tmp";
+#else
+    // On the board: the game's folder on the SD card (the music player
+    // converts each song to a MIDI file there)
+
+    tempdir = FILES_DIR;
 #endif
 
     return M_StringJoin(tempdir, DIR_SEPARATOR_S, s, NULL);

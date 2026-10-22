@@ -20,7 +20,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef ORIGCODE
 #include "SDL.h"
+#else
+#include "i_timer.h"
+#endif
 
 #include "opl.h"
 #include "opl_internal.h"
@@ -36,7 +40,11 @@ extern opl_driver_t opl_openbsd_driver;
 #ifdef _WIN32
 extern opl_driver_t opl_win32_driver;
 #endif
+#ifdef ORIGCODE
 extern opl_driver_t opl_sdl_driver;
+#else
+extern opl_driver_t opl_stm32_driver;     // Doom/port/opl_stm32.c
+#endif
 
 static opl_driver_t *drivers[] =
 {
@@ -49,7 +57,11 @@ static opl_driver_t *drivers[] =
 #ifdef _WIN32
     &opl_win32_driver,
 #endif
+#ifdef ORIGCODE
     &opl_sdl_driver,
+#else
+    &opl_stm32_driver,
+#endif
     NULL
 };
 
@@ -450,6 +462,8 @@ void OPL_Unlock(void)
     }
 }
 
+#ifdef ORIGCODE
+
 typedef struct
 {
     int finished;
@@ -504,6 +518,42 @@ void OPL_Delay(uint64_t us)
     SDL_DestroyMutex(delay_data.mutex);
     SDL_DestroyCond(delay_data.cond);
 }
+
+#else
+
+// On the board the callbacks run in the sound task, as the audio advances:
+// wait for this one, but not forever (the audio output may be stopped).
+
+static void DelayCallback(void *finished)
+{
+    *(volatile int *) finished = 1;
+}
+
+void OPL_Delay(uint64_t us)
+{
+    volatile int finished = 0;
+    int waited;
+
+    if (driver == NULL)
+    {
+        return;
+    }
+
+    OPL_SetCallback(us, DelayCallback, (void *) &finished);
+
+    for (waited = 0; !finished && waited < 200; ++waited)
+    {
+        I_Sleep(1);
+    }
+
+    if (!finished)
+    {
+        // Do not leave a callback pointing at this stack frame
+        OPL_ClearCallbacks();
+    }
+}
+
+#endif
 
 void OPL_SetPaused(int paused)
 {

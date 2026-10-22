@@ -198,6 +198,12 @@ size_t doom_fread(void *buf, size_t size, size_t count, doom_file_t *f)
   return got / size;
 }
 
+int doom_fgetc(doom_file_t *f)
+{
+  unsigned char c;
+  return (doom_fread(&c, 1, 1, f) == 1U) ? c : EOF;
+}
+
 size_t doom_fwrite(const void *buf, size_t size, size_t count, doom_file_t *f)
 {
   if (size == 0U)
